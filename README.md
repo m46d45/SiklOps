@@ -4,7 +4,7 @@
 
 Educational discrete-event simulation (DES) for construction production cycles.
 
-Streamlit app (successor branding to [SimKon](https://github.com/m46d45/SimKon)).
+Streamlit app (successor branding to [SiklOps](https://github.com/m46d45/SiklOps)).
 
 ## Features
 
@@ -40,7 +40,7 @@ Public repo: https://github.com/m46d45/SiklOps
 ## Version
 
 - **1.1** — SiklOps rebrand · Earthmoving + Concreting dual-cycle
-- Based on SimKon 1.0 earthmoving engine
+- Based on SiklOps 1.0 earthmoving engine
 
 ## License
 

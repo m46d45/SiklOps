@@ -170,15 +170,15 @@ def _render_duration_dist_widgets(
 def build_config_from_sidebar(st, operation: OperationType | None = None) -> SimulationConfig:
     """
     Render widget input di sidebar Streamlit dan kembalikan config.
-    v1.0: selalu Earthmoving (Excavator + Dump Truck, m³).
+    Earthmoving panel: excavator + dump truck (m³).
     """
     preset = default_config_for()
     loader_l, hauler_l, unit = "Excavator", "Dump Truck", "m³"
 
-    st.sidebar.header("⚙️ Parameter Earthmoving")
+    st.sidebar.header("Earthmoving parameters")
     st.sidebar.caption(
-        f"SimKon v1.0 · {loader_l} + {hauler_l} · volume {unit}. "
-        "Atur fleet & distribusi durasi, lalu jalankan simulasi."
+        f"SiklOps · {loader_l} + {hauler_l} · {unit}. "
+        "Fleet, cycle distributions, stop criteria."
     )
 
     num_loaders = st.sidebar.number_input(

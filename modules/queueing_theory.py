@@ -1,5 +1,5 @@
 """
-Little's Law & Kingman's Equation — tinjauan **sistem** Earthmoving (SimKon v1.0).
+Little's Law & Kingman's Equation — tinjauan **sistem** Earthmoving (SiklOps v1.0).
 
 Little's Law:
   - Antrian load: L_q = λ · W_q

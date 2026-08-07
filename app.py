@@ -43,14 +43,22 @@ st.markdown(
 )
 st.caption(
     f"v{APP_VERSION} · Streamlit · DES · Learning tool · "
-    "Successor concept to SimKon (rebranded multi-operation template)"
+    "Successor concept to SiklOps (rebranded multi-operation template)"
 )
 
-operation = st.sidebar.radio(
-    "Operation",
-    ["Earthmoving", "Concreting (RMC placing)"],
-    index=0,
-)
+with st.sidebar:
+    st.markdown(f"### SiklOps {APP_VERSION}")
+    st.caption("Cyclic construction operations · DES")
+    operation = st.radio(
+        "Operation",
+        ["Earthmoving", "Concreting (RMC placing)"],
+        index=0,
+    )
+    st.divider()
+    if operation == "Earthmoving":
+        st.caption("Sidebar below: earthmoving fleet & cycle times")
+    else:
+        st.caption("Concreting controls are on the main page (shared site scenario + method tabs).")
 
 # ---------------------------------------------------------------------------
 # EARTHMOVING
@@ -92,9 +100,11 @@ if operation == "Earthmoving":
     if "em_result" not in st.session_state:
         st.session_state.em_result = None
 
-    if run_clicked or st.session_state.em_result is None:
+    if run_clicked:
         with st.spinner("Running earthmoving DES…"):
             st.session_state.em_result = run_simulation(config)
+    elif st.session_state.em_result is None:
+        st.info("Set parameters in the **sidebar**, then click **Run Earthmoving**.")
 
     result = st.session_state.em_result
     if result is not None:

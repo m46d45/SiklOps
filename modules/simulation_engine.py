@@ -1,5 +1,5 @@
 """
-Modul 3 — Simulation Engine (inti) — SimKon v1.0
+Modul 3 — Simulation Engine (inti) — SiklOps v1.0
 
 Discrete Event Simulation (DES) untuk operasi **Earthmoving**
 (galian & angkut: excavator + dump truck).
@@ -23,12 +23,12 @@ from enum import Enum
 from typing import Any
 
 
-# Versi aplikasi (v1.0 = Earthmoving only)
-APP_VERSION = "1.1"
+# Versi aplikasi (multi-operation template; earthmoving engine core)
+APP_VERSION = "1.1.1"
 
 
 class OperationType(str, Enum):
-    """v1.0: hanya Earthmoving. Enum disimpan untuk kompatibilitas hasil/serialisasi."""
+    """Earthmoving engine (core). Enum disimpan untuk kompatibilitas hasil/serialisasi."""
 
     EARTHMOVING = "earthmoving"
 
@@ -414,7 +414,7 @@ def run_simulation(config: SimulationConfig) -> SimulationResult:
 
     Busy/wait dihitung hanya di [0, T_efektif] (interval di-clip di akhir).
     """
-    # Paksa operasi earthmoving di v1.0
+    # Earthmoving engine path
     if config.operation != OperationType.EARTHMOVING:
         config.operation = OperationType.EARTHMOVING
 

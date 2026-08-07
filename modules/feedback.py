@@ -40,7 +40,7 @@ def render_feedback(st, result: SimulationResult) -> bool:
 
     st.markdown(
         f"""
-**SimKon v1.0 — Earthmoving.** Operasi **{info.title}** mensimulasikan siklus
+**SiklOps v1.0 — Earthmoving.** Operasi **{info.title}** mensimulasikan siklus
 galian & angkut berulang di lapangan (bukan penjadwalan proyek keseluruhan).
 
 **Cara membaca hasil**

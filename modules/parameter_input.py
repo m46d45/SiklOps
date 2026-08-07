@@ -167,28 +167,33 @@ def _render_duration_dist_widgets(
     )
 
 
-def build_config_from_sidebar(st, operation: OperationType | None = None) -> SimulationConfig:
+def build_config_from_sidebar(
+    st,
+    operation: OperationType | None = None,
+    *,
+    container=None,
+) -> SimulationConfig:
     """
-    Render widget input di sidebar Streamlit dan kembalikan config.
-    Earthmoving panel: excavator + dump truck (m³).
+    Render earthmoving parameter widgets.
+    container: st.sidebar (legacy) or st / column (main page). Default: main area via st.
     """
+    sb = container if container is not None else st
     preset = default_config_for()
     loader_l, hauler_l, unit = "Excavator", "Dump Truck", "m³"
 
-    st.sidebar.header("Earthmoving parameters")
-    st.sidebar.caption(
-        f"SiklOps · {loader_l} + {hauler_l} · {unit}. "
-        "Fleet, cycle distributions, stop criteria."
+    sb.subheader("Earthmoving parameters")
+    sb.caption(
+        f"{loader_l} + {hauler_l} · {unit}. Fleet, cycle distributions, stop criteria."
     )
 
-    num_loaders = st.sidebar.number_input(
+    num_loaders = sb.number_input(
         f"Jumlah {loader_l}",
         min_value=1,
         max_value=10,
         value=preset.num_loaders,
         step=1,
     )
-    num_haulers = st.sidebar.number_input(
+    num_haulers = sb.number_input(
         f"Jumlah {hauler_l}",
         min_value=1,
         max_value=30,
@@ -197,8 +202,8 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
     )
 
     # ----- Distribusi durasi -----
-    st.sidebar.subheader("Distribusi durasi aktivitas")
-    mode = st.sidebar.radio(
+    sb.subheader("Distribusi durasi aktivitas")
+    mode = sb.radio(
         "Mode distribusi",
         options=["Sama untuk semua fase", "Berbeda per fase"],
         index=0,
@@ -208,7 +213,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
     default_cv = float(preset.cv)
 
     if mode == "Sama untuk semua fase":
-        kind_label = st.sidebar.selectbox(
+        kind_label = sb.selectbox(
             "Jenis distribusi (semua fase)",
             options=_DIST_CHOICES,
             index=_DIST_CHOICES.index(DIST_LABELS[DistKind.NORMAL]),
@@ -216,17 +221,17 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
         )
         global_kind = _LABEL_TO_KIND[kind_label]
 
-        st.sidebar.markdown("##### Mean per fase (menit)")
-        load_mean = st.sidebar.slider(
+        sb.markdown("##### Mean per fase (menit)")
+        load_mean = sb.slider(
             "Load (excavator muat truck)", 0.5, 30.0, float(preset.load_time_mean), 0.5
         )
-        haul_mean = st.sidebar.slider(
+        haul_mean = sb.slider(
             "Haul (truck ke spoil)", 0.5, 60.0, float(preset.haul_time_mean), 0.5
         )
-        dump_mean = st.sidebar.slider(
+        dump_mean = sb.slider(
             "Dump (bongkar material)", 0.5, 40.0, float(preset.dump_time_mean), 0.5
         )
-        return_mean = st.sidebar.slider(
+        return_mean = sb.slider(
             "Return (kembali ke cut)", 0.5, 60.0, float(preset.return_time_mean), 0.5
         )
 
@@ -236,20 +241,20 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
 
         if global_kind == DistKind.CONSTANT:
             cv_global = 0.0
-            st.sidebar.caption("Konstan: setiap fase memakai mean di atas tanpa acak.")
+            sb.caption("Konstan: setiap fase memakai mean di atas tanpa acak.")
         elif global_kind == DistKind.BETA:
-            st.sidebar.markdown("##### Parameter Beta (semua fase)")
-            st.sidebar.caption(
+            sb.markdown("##### Parameter Beta (semua fase)")
+            sb.caption(
                 "Untuk setiap fase, interval [min, max] = mean×(1±spread). "
                 "Bentuk α, β sama untuk semua."
             )
-            alpha = st.sidebar.number_input(
+            alpha = sb.number_input(
                 "α (alpha)", min_value=0.1, max_value=50.0, value=2.0, step=0.1
             )
-            beta_s = st.sidebar.number_input(
+            beta_s = sb.number_input(
                 "β (beta)", min_value=0.1, max_value=50.0, value=5.0, step=0.1
             )
-            spread = st.sidebar.slider(
+            spread = sb.slider(
                 "Spread relatif (± fraksi mean)",
                 0.1,
                 0.9,
@@ -277,7 +282,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
             dump_dist = _beta_for(dump_mean)
             return_dist = _beta_for(return_mean)
         else:
-            cv_global = st.sidebar.slider(
+            cv_global = sb.slider(
                 "CV (std/mean) global",
                 0.0,
                 1.0,
@@ -286,7 +291,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
                 help="Dipakai normal / log-normal / gamma untuk semua fase.",
             )
             if global_kind == DistKind.GAMMA and cv_global > 0:
-                st.sidebar.caption(
+                sb.caption(
                     f"Gamma: k=1/CV²≈{1/(cv_global**2):.2f}, "
                     f"θ=mean·CV² (berbeda per fase lewat mean)."
                 )
@@ -304,8 +309,8 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
 
     else:
         # Per fase
-        st.sidebar.caption("Atur distribusi & parameter untuk tiap fase siklus.")
-        with st.sidebar.expander("① Load (excavator)", expanded=True):
+        sb.caption("Atur distribusi & parameter untuk tiap fase siklus.")
+        with sb.expander("① Load (excavator)", expanded=True):
             load_dist = _render_duration_dist_widgets(
                 st,
                 "load",
@@ -314,7 +319,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
                 default_cv,
                 30.0,
             )
-        with st.sidebar.expander("② Haul ke spoil", expanded=False):
+        with sb.expander("② Haul ke spoil", expanded=False):
             haul_dist = _render_duration_dist_widgets(
                 st,
                 "haul",
@@ -323,7 +328,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
                 default_cv,
                 60.0,
             )
-        with st.sidebar.expander("③ Dump material", expanded=False):
+        with sb.expander("③ Dump material", expanded=False):
             dump_dist = _render_duration_dist_widgets(
                 st,
                 "dump",
@@ -332,7 +337,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
                 default_cv,
                 40.0,
             )
-        with st.sidebar.expander("④ Return ke cut", expanded=False):
+        with sb.expander("④ Return ke cut", expanded=False):
             return_dist = _render_duration_dist_widgets(
                 st,
                 "return",
@@ -348,7 +353,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
         default_kind = DistKind.NORMAL
         cv_config = default_cv
 
-    payload = st.sidebar.number_input(
+    payload = sb.number_input(
         f"Kapasitas per trip ({unit})",
         min_value=0.5,
         max_value=100.0,
@@ -357,8 +362,8 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
     )
 
     # ----- Batas simulasi -----
-    st.sidebar.subheader("Batas simulasi")
-    stop_label = st.sidebar.radio(
+    sb.subheader("Batas simulasi")
+    stop_label = sb.radio(
         "Mode berhenti",
         options=["Jumlah siklus", "Durasi waktu"],
         index=0,
@@ -373,7 +378,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
     if stop_label == "Jumlah siklus":
         stop_mode = "cycles"
         target_cycles = int(
-            st.sidebar.number_input(
+            sb.number_input(
                 "Jumlah siklus yang disimulasikan",
                 min_value=1,
                 max_value=2000,
@@ -381,7 +386,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
                 step=1,
             )
         )
-        duration_h = st.sidebar.slider(
+        duration_h = sb.slider(
             "Batas waktu maksimum (jam)",
             1.0,
             24.0,
@@ -391,7 +396,7 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
     else:
         stop_mode = "duration"
         target_cycles = 0
-        duration_h = st.sidebar.slider(
+        duration_h = sb.slider(
             "Durasi simulasi (jam)",
             1.0,
             12.0,
@@ -399,11 +404,11 @@ def build_config_from_sidebar(st, operation: OperationType | None = None) -> Sim
             0.5,
         )
 
-    use_seed = st.sidebar.checkbox("Gunakan seed tetap (reproducible)", value=True)
+    use_seed = sb.checkbox("Gunakan seed tetap (reproducible)", value=True)
     seed = None
     if use_seed:
         seed = int(
-            st.sidebar.number_input("Seed", min_value=0, max_value=99999, value=42)
+            sb.number_input("Seed", min_value=0, max_value=99999, value=42)
         )
 
     return SimulationConfig(

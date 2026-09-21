@@ -18,19 +18,22 @@ Parade Tim Kerja **tidak** punya Environment Variables di Vercel — jangan menc
 
 ### Cara A — tetap di Vercel (paling cepat)
 
-1. Buka project **siklops** (domain `siklops.vercel.app`), bukan `parade-tim-kerja`.
-2. Sidebar kiri: **Storage** (bukan halaman Environment Variables).
-3. **Create Database** → **Neon Postgres** → Create, link ke Production.
-4. Vercel akan mengisi `POSTGRES_URL` (atau `DATABASE_URL`) otomatis.
-5. **Deployments → Production → Redeploy**.
-6. Buka https://siklops.vercel.app/statistik  
-   Harus ada “Backend: Neon/Postgres”, bukan peringatan PGLite.
+1. Tutup project `parade-tim-kerja`. Buka project **siklops** (domain `siklops.vercel.app`).
+2. Sidebar kiri: **Storage** (bukan Environment Variables).
+3. **Create Database** / Marketplace → **Neon**.
+4. Pilih **Create New Neon Account** (atau **Link Existing** jika sudah punya akun neon.tech).
+5. Jangan nyalakan Neon Auth / Better Auth. Plan Free cukup.
+6. **Connect Project** → **siklops** → environment **Production** saja.
+7. Vercel mengisi `DATABASE_URL` (dan kadang `POSTGRES_URL`) otomatis.
+8. **Deployments → Production → … → Redeploy**.
+9. Buka https://siklops.vercel.app/statistik  
+   Harus ada “Backend: Neon/Postgres”, bukan banner PGLite kuning.
 
 ### Cara B — dari konsol Neon
 
-1. Buka [console.neon.tech](https://console.neon.tech) (akun yang sama dengan database Parade, jika ada).
+1. Buka [console.neon.tech](https://console.neon.tech).
 2. Pilih project yang sudah ada, atau **New Project**.
-3. **Connection details** → URI `postgresql://…` (boleh pooled).
+3. Tombol **Connect** → Connection string `postgresql://…`.
 4. Project **siklops** → **Settings → Environment Variables → Add**.
 5. Key: `DATABASE_URL`. Value: tempel URI. Environment: **Production**.
 6. **Redeploy** Production.

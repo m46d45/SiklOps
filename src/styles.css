@@ -1,0 +1,75 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-background: #f4f2ee;
+  --color-foreground: #1c1b19;
+  --color-card: #fffcf7;
+  --color-card-foreground: #1c1b19;
+  --color-popover: #fffcf7;
+  --color-popover-foreground: #1c1b19;
+  --color-primary: #2f4a3e;
+  --color-primary-foreground: #f4f2ee;
+  --color-secondary: #e8e4dc;
+  --color-secondary-foreground: #1c1b19;
+  --color-muted: #ebe7df;
+  --color-muted-foreground: #6b6560;
+  --color-accent: #dfe8e3;
+  --color-accent-foreground: #1c1b19;
+  --color-destructive: #b42318;
+  --color-border: color-mix(in oklab, #1c1b19 12%, transparent);
+  --color-ring: #2f4a3e;
+  --color-chart-1: #2f4a3e;
+  --color-chart-2: #3d6b8a;
+  --color-chart-3: #b06a2b;
+  --color-chart-4: #5c6b7a;
+  --color-chart-5: #6b5b7a;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --motion-quick: 150ms;
+  --motion-fast: 250ms;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

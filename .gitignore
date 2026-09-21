@@ -1,39 +1,17 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-.eggs/
-dist/
-build/
-
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# IDE / OS
-.idea/
-.vscode/
-*.swp
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Test / cache
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Streamlit / local secrets (jangan commit)
-.streamlit/secrets.toml
+node_modules
+dist
+.output
+.vercel
+.nitro
+.vinxi
+.tanstack
 .env
 .env.*
-
-# Jupyter
-.ipynb_checkpoints/
+!.env.example
+*.log
+screenshots
+artifacts
+.DS_Store
+coverage
+playwright-report
+test-results

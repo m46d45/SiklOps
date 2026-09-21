@@ -44,7 +44,7 @@ Environment:
 
 | Variabel | Wajib | Keterangan |
 |---|---|---|
-| `DATABASE_URL` | Ya, untuk `/statistik` | Neon yang sama dengan Parade Tim Kerja boleh |
+| `DATABASE_URL` atau `POSTGRES_URL` | Ya, untuk `/statistik` persisten | Buat Neon di **Storage** project siklops, atau URI dari console.neon.tech. Parade Tim Kerja tidak punya variabel di Vercel. |
 | `VITE_AUTH_ENABLED` | Jangan diisi | Login tetap mati |
 
 Build: `npm run build` · Node 22.

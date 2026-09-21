@@ -113,10 +113,12 @@ function StatistikPage() {
 
         {ready && !stats.persistent ? (
           <p className="rounded-[var(--radius-md)] border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-            Statistik memakai penyimpanan sementara (PGLite). Untuk kuliah masal,
-            set <code className="font-mono">DATABASE_URL</code> Neon pada{" "}
-            <strong>project Vercel SiklOps-web</strong> (boleh URL yang sama
-            dengan Parade Tim Kerja), lalu redeploy.
+            Statistik memakai penyimpanan sementara (PGLite) — angka hilang
+            setiap instance serverless. Untuk kuliah masal: di project Vercel{" "}
+            <strong>siklops</strong>, buat database Neon lewat{" "}
+            <strong>Storage</strong> (atau tempel URI dari console.neon.tech
+            sebagai <code className="font-mono">DATABASE_URL</code>), lalu
+            Redeploy.
           </p>
         ) : null}
         {ready && stats.persistent ? (

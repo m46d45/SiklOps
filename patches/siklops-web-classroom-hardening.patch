@@ -1,0 +1,1039 @@
+From 74ca0f7dcac04ffb8293360cb64755f0edb5592c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 21 Sep 2026 05:35:06 +0000
+Subject: [PATCH] Harden SiklOps-web for public classroom use.
+
+Turn auth off unless explicitly enabled, add privacy and model-disclaimer footer, persist usage as daily rollups with rate limits, and make comparison/multi-seed opt-in so lecture-hall laptops stay responsive.
+---
+ .env.example                                 |  6 ++
+ README.md                                    | 62 +++++++-------
+ migrations/0003_usage_daily.sql              | 12 +++
+ src/components/simkon/AsphaltPavingPanel.tsx |  2 +-
+ src/components/simkon/BricklayingPanel.tsx   |  2 +-
+ src/components/simkon/ComparisonPanel.tsx    | 57 ++++++++++---
+ src/components/simkon/ConcretingPanel.tsx    |  2 +-
+ src/components/simkon/ParameterPanel.tsx     |  4 +-
+ src/components/simkon/PrecastPlantPanel.tsx  |  2 +-
+ src/components/simkon/ResultsPanel.tsx       | 45 ++++++++--
+ src/components/simkon/SiteFooter.tsx         | 29 +++++++
+ src/components/simkon/TowerCraneResults.tsx  | 38 +++++++--
+ src/lib/auth/client.ts                       |  7 +-
+ src/lib/auth/server.ts                       |  5 +-
+ src/lib/simkon/comparison.ts                 |  7 +-
+ src/lib/simkon/engine.ts                     | 20 ++++-
+ src/lib/simkon/limits.ts                     | 21 +++++
+ src/lib/simkon/multiRun.ts                   |  4 +-
+ src/lib/simkon/usage.ts                      | 89 +++++++++++++++-----
+ src/lib/simkon/usageClient.ts                |  4 +
+ src/routes/__root.tsx                        |  4 +-
+ src/routes/index.tsx                         |  3 -
+ src/routes/login.tsx                         |  5 +-
+ src/routes/statistik.tsx                     | 19 ++++-
+ 24 files changed, 341 insertions(+), 108 deletions(-)
+ create mode 100644 .env.example
+ create mode 100644 migrations/0003_usage_daily.sql
+ create mode 100644 src/components/simkon/SiteFooter.tsx
+ create mode 100644 src/lib/simkon/limits.ts
+
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..b825896
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,6 @@
++# Neon/Postgres — set this on the SiklOps-web Vercel project.
++# The same URL as Parade Tim Kerja is fine.
++DATABASE_URL=
++
++# Login is off unless you set this to true at build time.
++# VITE_AUTH_ENABLED=true
+diff --git a/README.md b/README.md
+index 922317f..8b2480f 100644
+--- a/README.md
++++ b/README.md
+@@ -2,20 +2,36 @@
+ 
+ **SiklOps** — *Simulation of Cyclic Construction Operations*
+ 
+-Educational discrete-event simulation for construction production cycles  
+-(Earthmoving · Bricklaying · Concreting / RMC placing).
++Educational discrete-event simulation for construction production cycles.
+ 
+-This is the **web app** (React + TypeScript + TanStack Start + Tailwind) — same UI as the Grok Build sandbox.  
+-Deploy target: **Vercel**.
++Live: **https://siklops.vercel.app**
+ 
+ > Streamlit Python edition (legacy): [m46d45/SiklOps](https://github.com/m46d45/SiklOps) — optional, not required.
+ 
+-## Features
++## Operations (simple → complex)
+ 
+-- **Earthmoving** — excavator + dump truck, distributions, cost, emissions, fleet comparison
+-- **Concreting** — dual-cycle RMC (truck mixer + placing) with site buffer; methods: buggy / crane bucket / pump
+-- Shared result tabs: Ringkasan, Perbandingan, queueing insights
+-- Illustrations and Indonesian/English learning copy
++1. **Earthmoving** — excavator + dump truck
++2. **Bricklaying** — helper + mason + buffers
++3. **Concreting / RMC** — truck mixer + placing (buggy / crane bucket / pump)
++4. **Tower crane** — multi-front, single server, priority
++5. **Asphalt paving** — plant + truck + paver + rollers
++6. **Precast plant** — form + crew + crane + cure slots
++
++Shared result views: ringkasan, perbandingan fleet (on demand), queueing insights, cost & emissions. Illustrations and Indonesian learning copy.
++
++This is a **classroom model**, not a field design tool.
++
++## Classroom / public lecture
++
++Simulation runs **in the browser**. Hundreds of students do not load the server.
++
++On the **SiklOps-web** Vercel project (this repo, not Parade Tim Kerja):
++
++1. Set `DATABASE_URL` to the same Neon/Postgres URL already used by Parade Tim Kerja (or another Neon database). Redeploy. Check `/statistik` — it should say the backend is Neon.
++2. Leave `VITE_AUTH_ENABLED` unset (login stays off). Set `true` only if you intentionally want Google/X sign-in.
++3. No student accounts are required.
++
++Privacy: a random browser id is stored locally and visit/simulation counts are aggregated. No names or emails unless you turn auth on.
+ 
+ ## Local development
+ 
+@@ -30,30 +46,16 @@ Node **22+** recommended.
+ 
+ ## Deploy on Vercel
+ 
+-### Option A — Import from GitHub (recommended)
+-
+-1. Push this repo to GitHub (already: `m46d45/SiklOps-web` if following our setup).
+-2. Open [vercel.com/new](https://vercel.com/new)
+-3. Import **`m46d45/SiklOps-web`**
+-4. Framework: auto / Vite · Build: `npm run build` · Output: handled by Nitro (`vercel` preset)
+-5. Deploy
+-
+-No `DATABASE_URL` needed for classroom use (PGLite fallback).
+-
+-### Option B — CLI
+-
+-```bash
+-npm i -g vercel
+-vercel login
+-vercel --prod
+-```
++1. Import **`m46d45/SiklOps-web`**
++2. Framework: Vite · Build: `npm run build`
++3. Environment: `DATABASE_URL` (Neon). Optional: `VITE_AUTH_ENABLED=true` only if you want login.
+ 
+ ## Stack
+ 
+-- React 19 · TypeScript · Vite · TanStack Start / Router / Query  
+-- Tailwind CSS v4 · Radix / shadcn · Recharts · Zustand  
+-- Nitro preset `vercel` for SSR deploy  
++- React 19 · TypeScript · Vite · TanStack Start / Router
++- Tailwind CSS v4 · Radix / shadcn · Recharts
++- Nitro preset `vercel` for SSR deploy
+ 
+ ## License
+ 
+-Educational use.
++Educational use (kuliah / pelatihan). Bukan spesifikasi proyek.
+diff --git a/migrations/0003_usage_daily.sql b/migrations/0003_usage_daily.sql
+new file mode 100644
+index 0000000..bbd2778
+--- /dev/null
++++ b/migrations/0003_usage_daily.sql
+@@ -0,0 +1,12 @@
++-- Daily rollups for classroom stats (replaces unbounded usage_events writes).
++
++create table if not exists usage_daily (
++  day date not null,
++  kind text not null,
++  visitor_id text not null default '',
++  operation_id text not null default '',
++  count integer not null default 0,
++  primary key (day, kind, visitor_id, operation_id)
++);
++
++create index if not exists usage_daily_day_kind_idx on usage_daily (day, kind);
+diff --git a/src/components/simkon/AsphaltPavingPanel.tsx b/src/components/simkon/AsphaltPavingPanel.tsx
+index 95773b9..d44a3f0 100644
+--- a/src/components/simkon/AsphaltPavingPanel.tsx
++++ b/src/components/simkon/AsphaltPavingPanel.tsx
+@@ -247,7 +247,7 @@ export function AsphaltPavingPanel() {
+           <Field label="Breakdown" unit="ribu Rp/jam" value={fields.cost_breakdown_per_hour / 1000} min={0} max={2000} step={10} onChange={(v) => patch({ cost_breakdown_per_hour: v * 1000 })} />
+           <Field label="Finish roller" unit="ribu Rp/jam" value={fields.cost_finish_per_hour / 1000} min={0} max={2000} step={10} onChange={(v) => patch({ cost_finish_per_hour: v * 1000 })} />
+           <Field label="Plant" unit="ribu Rp/jam" value={fields.cost_plant_per_hour / 1000} min={0} max={5000} step={50} onChange={(v) => patch({ cost_plant_per_hour: v * 1000 })} />
+-          <Field label="Target siklus" value={targetCycles} min={0} max={5000} onChange={setTargetCycles} />
++          <Field label="Target siklus" value={targetCycles} min={0} max={400} onChange={setTargetCycles} />
+           <Field label="Target volume" unit="m³" value={targetVolume} min={0} max={20000} step={10} onChange={setTargetVolume} />
+           <Field label="Seed" value={seed} min={1} max={999999} onChange={(v) => setSeed(Math.round(v))} />
+         </CardContent>
+diff --git a/src/components/simkon/BricklayingPanel.tsx b/src/components/simkon/BricklayingPanel.tsx
+index 50f66ce..9c7fc39 100644
+--- a/src/components/simkon/BricklayingPanel.tsx
++++ b/src/components/simkon/BricklayingPanel.tsx
+@@ -379,7 +379,7 @@ export function BricklayingPanel() {
+ 
+           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+             <Field label="Target dinding" unit="m²" value={targetVolume} min={1} max={500} onChange={setTargetVolume} />
+-            <Field label="Target siklus tukang" value={targetCycles} min={1} max={5000} onChange={(v) => setTargetCycles(Math.floor(v))} />
++            <Field label="Target siklus tukang" value={targetCycles} min={1} max={400} onChange={(v) => setTargetCycles(Math.floor(v))} />
+             <Field label="Seed" value={seed} min={1} step={1} onChange={(v) => setSeed(Math.floor(v))} />
+           </div>
+ 
+diff --git a/src/components/simkon/ComparisonPanel.tsx b/src/components/simkon/ComparisonPanel.tsx
+index 433bb8e..b80cc1b 100644
+--- a/src/components/simkon/ComparisonPanel.tsx
++++ b/src/components/simkon/ComparisonPanel.tsx
+@@ -8,13 +8,16 @@ import {
+   XAxis,
+   YAxis,
+ } from "recharts";
+-import { useMemo, useState } from "react";
++import { useEffect, useMemo, useState } from "react";
+ import {
+   bestFleetHints,
++  COMPARE_HAULERS_MAX,
+   runComparisonGrid,
++  type ComparisonGrid,
+ } from "@/lib/simkon/comparison";
+ import type { SimulationConfig } from "@/lib/simkon/engine";
+ import { resourceLabels } from "@/lib/simkon/engine";
++import { Button } from "@/components/ui/button";
+ import { Label } from "@/components/ui/label";
+ import { Slider } from "@/components/ui/slider";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+@@ -39,19 +42,33 @@ export function ComparisonPanel({ baseConfig }: Props) {
+   );
+   const unit = labels.unit;
+   const [cvSense, setCvSense] = useState(baseConfig.cv ?? 0.2);
++  const [grid, setGrid] = useState<ComparisonGrid | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  useEffect(() => {
++    setGrid(null);
++  }, [baseConfig]);
++
++  const runGrid = () => {
++    setBusy(true);
++    requestAnimationFrame(() => {
++      try {
++        setGrid(runComparisonGrid({ ...baseConfig, cv: cvSense }));
++      } finally {
++        setBusy(false);
++      }
++    });
++  };
+ 
+-  const grid = useMemo(
+-    () => runComparisonGrid({ ...baseConfig, cv: cvSense }),
+-    [baseConfig, cvSense],
+-  );
+   const hints = useMemo(
+-    () => bestFleetHints(grid, labels.loader),
++    () => (grid ? bestFleetHints(grid, labels.loader) : []),
+     [grid, labels.loader],
+   );
+ 
+   // Sweet spots per loader/place count
+   const sweet = useMemo(() => {
+     const out: Array<{ nL: number; costH: number; emiH: number; thrH: number }> = [];
++    if (!grid) return out;
+     for (const nL of grid.loaders) {
+       const cells = grid.cells.filter((c) => c.num_loaders === nL);
+       if (!cells.length) continue;
+@@ -82,7 +99,7 @@ export function ComparisonPanel({ baseConfig }: Props) {
+             Parameter cycle, kapasitas, distribusi, target, dan seed diambil dari setup
+             simulasi saat ini. Yang di-sweep:{" "}
+             <strong className="text-foreground">{labels.loader} 1–3</strong> dan{" "}
+-            <strong className="text-foreground">{labels.hauler} 1–40</strong>.{" "}
++            <strong className="text-foreground">{labels.hauler} 1–{COMPARE_HAULERS_MAX}</strong>.{" "}
+             Sumbu X = jumlah {labels.hauler}; tiap warna = jumlah {labels.loader}.
+           </CardDescription>
+         </CardHeader>
+@@ -135,7 +152,7 @@ export function ComparisonPanel({ baseConfig }: Props) {
+                 place_cap; truck = n<sub>T</sub> × (60 / t<sub>truck</sub>) × drum_cap;
+                 sistem = min(place, truck). Place cycle mean ≈{" "}
+                 <span className="font-mono tabular-nums">
+-                  {formatNum(grid.cycleMeanMin, 1)}
++                  {formatNum(grid?.cycleMeanMin ?? 0, 1)}
+                 </span>{" "}
+                 mnt.
+               </>
+@@ -145,7 +162,7 @@ export function ComparisonPanel({ baseConfig }: Props) {
+                 hauling: n<sub>H</sub> × (60 / t<sub>cycle</sub>) × payload (cycle =
+                 load+haul+dump+return, tanpa tunggu). Cycle mean setup ≈{" "}
+                 <span className="font-mono tabular-nums">
+-                  {formatNum(grid.cycleMeanMin, 1)}
++                  {formatNum(grid?.cycleMeanMin ?? 0, 1)}
+                 </span>{" "}
+                 mnt.
+               </>
+@@ -173,12 +190,30 @@ export function ComparisonPanel({ baseConfig }: Props) {
+               max={0.6}
+               step={0.05}
+               value={[cvSense]}
+-              onValueChange={([v]) => setCvSense(v)}
++              onValueChange={([v]) => {
++                setCvSense(v);
++                setGrid(null);
++              }}
+             />
++            <Button type="button" onClick={runGrid} disabled={busy} className="mt-2">
++              {busy ? "Menghitung grid…" : "Hitung perbandingan"}
++            </Button>
++            <p className="text-xs text-muted-foreground">
++              Grid menjalankan puluhan simulasi di browser. Tidak jalan otomatis
++              agar HP/Chromebook di kelas tidak freeze.
++            </p>
+           </div>
+         </CardContent>
+       </Card>
+ 
++      {!grid ? (
++        <p className="text-sm text-muted-foreground">
++          Tekan <strong className="text-foreground">Hitung perbandingan</strong> untuk
++          menggambar kurva fleet.
++        </p>
++      ) : (
++        <>
++
+       <ThroughputChart
+         unit={unit}
+         data={grid.byHauler}
+@@ -340,6 +375,8 @@ export function ComparisonPanel({ baseConfig }: Props) {
+           </p>
+         </CardContent>
+       </Card>
++        </>
++      )}
+     </div>
+   );
+ }
+diff --git a/src/components/simkon/ConcretingPanel.tsx b/src/components/simkon/ConcretingPanel.tsx
+index ad4043b..c0f3c7a 100644
+--- a/src/components/simkon/ConcretingPanel.tsx
++++ b/src/components/simkon/ConcretingPanel.tsx
+@@ -422,7 +422,7 @@ export function ConcretingPanel() {
+               label="Target siklus (cap)"
+               value={site.target_cycles}
+               min={1}
+-              max={500}
++              max={400}
+               step={1}
+               onChange={(v) => patchSite({ target_cycles: Math.floor(v) })}
+             />
+diff --git a/src/components/simkon/ParameterPanel.tsx b/src/components/simkon/ParameterPanel.tsx
+index 99935f3..fb52ef5 100644
+--- a/src/components/simkon/ParameterPanel.tsx
++++ b/src/components/simkon/ParameterPanel.tsx
+@@ -618,7 +618,7 @@ export function ParameterPanel({
+             label="Target siklus"
+             value={draft.target_cycles || 50}
+             min={0}
+-            max={2000}
++            max={400}
+             step={1}
+             onChange={(v) =>
+               set({ target_cycles: Math.max(0, Math.floor(v)), stop_mode: "either" })
+@@ -629,7 +629,7 @@ export function ParameterPanel({
+             unit={op.unit}
+             value={draft.target_volume ?? 100}
+             min={0}
+-            max={100000}
++            max={20000}
+             step={1}
+             onChange={(v) => set({ target_volume: Math.max(0, v), stop_mode: "either" })}
+           />
+diff --git a/src/components/simkon/PrecastPlantPanel.tsx b/src/components/simkon/PrecastPlantPanel.tsx
+index c79d3ff..814feee 100644
+--- a/src/components/simkon/PrecastPlantPanel.tsx
++++ b/src/components/simkon/PrecastPlantPanel.tsx
+@@ -227,7 +227,7 @@ export function PrecastPlantPanel() {
+           <Field label="Crane" unit="ribu Rp/jam" value={fields.cost_crane_per_hour / 1000} min={0} max={2000} step={10} onChange={(v) => patch({ cost_crane_per_hour: v * 1000 })} />
+           <Field label="Form (amort.)" unit="ribu Rp/jam" value={fields.cost_form_per_hour / 1000} min={0} max={200} step={1} onChange={(v) => patch({ cost_form_per_hour: v * 1000 })} />
+           <Field label="Cure space" unit="ribu Rp/jam" value={fields.cost_cure_per_hour / 1000} min={0} max={200} step={1} onChange={(v) => patch({ cost_cure_per_hour: v * 1000 })} />
+-          <Field label="Target elemen (siklus)" value={targetCycles} min={0} max={500} onChange={setTargetCycles} />
++          <Field label="Target elemen (siklus)" value={targetCycles} min={0} max={400} onChange={setTargetCycles} />
+           <Field label="Target volume" unit="m³" value={targetVolume} min={0} max={5000} step={5} onChange={setTargetVolume} />
+           <Field label="Seed" value={seed} min={1} max={999999} onChange={(v) => setSeed(Math.round(v))} />
+         </CardContent>
+diff --git a/src/components/simkon/ResultsPanel.tsx b/src/components/simkon/ResultsPanel.tsx
+index 555c1b6..9caaa97 100644
+--- a/src/components/simkon/ResultsPanel.tsx
++++ b/src/components/simkon/ResultsPanel.tsx
+@@ -31,7 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+ import { computeCosts, formatMoney } from "@/lib/simkon/costs";
+ import { computeEmissions, formatKg } from "@/lib/simkon/emissions";
+ import { detectSteadyState } from "@/lib/simkon/steadyState";
+-import { runMultiSeed } from "@/lib/simkon/multiRun";
++import { runMultiSeed, type MultiRunSummary } from "@/lib/simkon/multiRun";
+ import { phaseLabelsFor } from "@/lib/simkon/operations";
+ import { formatNum, formatPct } from "@/lib/utils";
+ 
+@@ -67,11 +67,20 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
+   const littleNErr =
+     sys.little_N_error_rel != null ? sys.little_N_error_rel * 100 : null;
+ 
+-  const [multiN, setMultiN] = useState(10);
+-  const multi = useMemo(
+-    () => runMultiSeed(result.config, multiN),
+-    [result.config, multiN],
+-  );
++  const [multiN, setMultiN] = useState(5);
++  const [multi, setMulti] = useState<MultiRunSummary | null>(null);
++  const [multiBusy, setMultiBusy] = useState(false);
++
++  const runMulti = () => {
++    setMultiBusy(true);
++    requestAnimationFrame(() => {
++      try {
++        setMulti(runMultiSeed(result.config, multiN));
++      } finally {
++        setMultiBusy(false);
++      }
++    });
++  };
+ 
+   const stopMsg = (() => {
+     const mins = formatNum(result.simulated_minutes, 1);
+@@ -422,24 +431,37 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
+             <CardHeader className="pb-2">
+               <CardTitle className="text-sm">Multi-run (sebaran seed)</CardTitle>
+               <CardDescription>
+-                {multi.n} run dari seed {result.config.seed ?? 12345} … mean ± std.
++                Tidak dihitung otomatis — tekan tombol agar laptop kelas tidak
++                membeku. {multiN} run dari seed {result.config.seed ?? 12345}.
+               </CardDescription>
+             </CardHeader>
+             <CardContent className="space-y-3">
+               <div className="flex flex-wrap items-center gap-2">
+                 <span className="text-xs text-muted-foreground">Jumlah run</span>
+-                {[5, 10, 20].map((n) => (
++                {[5, 10].map((n) => (
+                   <Button
+                     key={n}
+                     type="button"
+                     size="sm"
+                     variant={multiN === n ? "default" : "outline"}
+-                    onClick={() => setMultiN(n)}
++                    onClick={() => {
++                      setMultiN(n);
++                      setMulti(null);
++                    }}
+                   >
+                     {n}
+                   </Button>
+                 ))}
++                <Button
++                  type="button"
++                  size="sm"
++                  onClick={runMulti}
++                  disabled={multiBusy}
++                >
++                  {multiBusy ? "Menghitung…" : "Hitung sebaran"}
++                </Button>
+               </div>
++              {multi ? (
+               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                 <MetricCard
+                   label={`Throughput (${unit}/jam)`}
+@@ -457,6 +479,11 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
+                   hint={`${formatNum(multi.unit_emission.min, 3)} – ${formatNum(multi.unit_emission.max, 3)}`}
+                 />
+               </div>
++              ) : (
++                <p className="text-xs text-muted-foreground">
++                  Hasil satu seed sudah di atas. Multi-run menampilkan sebaran antar seed.
++                </p>
++              )}
+             </CardContent>
+           </Card>
+ 
+diff --git a/src/components/simkon/SiteFooter.tsx b/src/components/simkon/SiteFooter.tsx
+new file mode 100644
+index 0000000..1090fbe
+--- /dev/null
++++ b/src/components/simkon/SiteFooter.tsx
+@@ -0,0 +1,29 @@
++import { Link } from "@tanstack/react-router";
++
++export function SiteFooter() {
++  return (
++    <footer className="border-t border-border bg-background">
++      <div className="mx-auto max-w-6xl space-y-3 px-4 py-6 text-xs leading-relaxed text-muted-foreground sm:px-6">
++        <p>
++          <strong className="font-medium text-foreground">Model ajar, bukan desain lapangan.</strong>{" "}
++          Throughput, biaya satuan, emisi solar, match factor, dan rumus antrian
++          (Little / Kingman) adalah model pendidikan dengan asumsi yang disederhanakan.
++          Jangan dipakai sebagai spesifikasi proyek tanpa kalibrasi data lapangan.
++        </p>
++        <p>
++          <strong className="font-medium text-foreground">Privasi.</strong> Simulasi
++          berjalan di browser Anda. Tidak perlu akun. Aplikasi menyimpan ID acak di
++          peramban dan mengirim hitungan kunjungan/simulasi (tanpa nama, email, atau
++          nilai tugas) agar dosen melihat agregat di{" "}
++          <Link to="/statistik" className="underline underline-offset-2">
++            /statistik
++          </Link>
++          . Hapus data situs di browser untuk mereset ID perangkat.
++        </p>
++        <p className="text-[11px]">
++          SiklOps · Discrete-event simulation · Pembelajaran operasi konstruksi
++        </p>
++      </div>
++    </footer>
++  );
++}
+diff --git a/src/components/simkon/TowerCraneResults.tsx b/src/components/simkon/TowerCraneResults.tsx
+index d54cf32..540beac 100644
+--- a/src/components/simkon/TowerCraneResults.tsx
++++ b/src/components/simkon/TowerCraneResults.tsx
+@@ -1,7 +1,7 @@
+ /**
+  * Hasil khusus Tower Crane — tanpa metafor excavator/hauler/dump truck.
+  */
+-import { useMemo, useState } from "react";
++import { useState } from "react";
+ import {
+   Bar,
+   BarChart,
+@@ -18,7 +18,7 @@ import {
+ import type { SimulationResult } from "@/lib/simkon/engine";
+ import { computeCosts, formatMoney } from "@/lib/simkon/costs";
+ import { computeEmissions, formatKg } from "@/lib/simkon/emissions";
+-import { runMultiSeed } from "@/lib/simkon/multiRun";
++import { runMultiSeed, type MultiRunSummary } from "@/lib/simkon/multiRun";
+ import { MetricCard } from "@/components/simkon/MetricCard";
+ import { Badge } from "@/components/ui/badge";
+ import { Button } from "@/components/ui/button";
+@@ -61,11 +61,19 @@ export function TowerCraneResults({ result }: Props) {
+   const costs = computeCosts(result);
+   const emissions = computeEmissions(result);
+ 
+-  const [multiN, setMultiN] = useState(10);
+-  const multi = useMemo(
+-    () => runMultiSeed(result.config, multiN),
+-    [result.config, multiN],
+-  );
++  const [multiN, setMultiN] = useState(5);
++  const [multi, setMulti] = useState<MultiRunSummary | null>(null);
++  const [multiBusy, setMultiBusy] = useState(false);
++  const runMulti = () => {
++    setMultiBusy(true);
++    requestAnimationFrame(() => {
++      try {
++        setMulti(runMultiSeed(result.config, multiN));
++      } finally {
++        setMultiBusy(false);
++      }
++    });
++  };
+ 
+   const stopMsg = `Berhenti karena waktu operasi habis (${formatNum(hours, 2)} jam · ${result.total_trips} lift).`;
+ 
+@@ -479,18 +487,25 @@ export function TowerCraneResults({ result }: Props) {
+             <CardContent className="space-y-3">
+               <div className="flex flex-wrap items-center gap-2">
+                 <span className="text-xs text-muted-foreground">N seed:</span>
+-                {[5, 10, 20].map((n) => (
++                {[5, 10].map((n) => (
+                   <Button
+                     key={n}
+                     type="button"
+                     size="sm"
+                     variant={multiN === n ? "default" : "outline"}
+-                    onClick={() => setMultiN(n)}
++                    onClick={() => {
++                      setMultiN(n);
++                      setMulti(null);
++                    }}
+                   >
+                     {n}
+                   </Button>
+                 ))}
++                <Button type="button" size="sm" onClick={runMulti} disabled={multiBusy}>
++                  {multiBusy ? "Menghitung…" : "Hitung sebaran"}
++                </Button>
+               </div>
++              {multi ? (
+               <div className="grid gap-3 sm:grid-cols-3">
+                 <MetricCard
+                   label="Throughput mean"
+@@ -508,6 +523,11 @@ export function TowerCraneResults({ result }: Props) {
+                   )}
+                 />
+               </div>
++              ) : (
++                <p className="text-xs text-muted-foreground">
++                  Tekan hitung sebaran untuk mereplikasi seed (maks. 10).
++                </p>
++              )}
+             </CardContent>
+           </Card>
+         </TabsContent>
+diff --git a/src/lib/auth/client.ts b/src/lib/auth/client.ts
+index ebbfd9f..a867a93 100644
+--- a/src/lib/auth/client.ts
++++ b/src/lib/auth/client.ts
+@@ -24,11 +24,10 @@ export const authClient = createAuthClient({
+ });
+ 
+ /**
+- * True when sign-in UI should be shown. On by default (preview via the baked
+- * preview client, deployed apps via the injected per-app client); set
+- * `VITE_AUTH_ENABLED=false` to force it off (dev user — see `use-current-user`).
++ * True when sign-in UI should be shown. Off for public classroom use unless
++ * `VITE_AUTH_ENABLED=true` is set at build time.
+  */
+-export const authEnabled = import.meta.env.VITE_AUTH_ENABLED !== "false";
++export const authEnabled = import.meta.env.VITE_AUTH_ENABLED === "true";
+ 
+ /** The upstream providers to render sign-in buttons for. */
+ export { GROK_PROVIDERS };
+diff --git a/src/lib/auth/server.ts b/src/lib/auth/server.ts
+index eb2b6e8..3e93c5f 100644
+--- a/src/lib/auth/server.ts
++++ b/src/lib/auth/server.ts
+@@ -68,9 +68,8 @@ const env = (key: string): string | undefined => {
+   return value ? value : undefined;
+ };
+ 
+-// Explicit off-switch. The deployer sets `VITE_AUTH_ENABLED=true` when it
+-// provisions auth; set it to "false" to force auth off everywhere (dev user).
+-const authDisabled = env("VITE_AUTH_ENABLED") === "false";
++// Classroom default: auth off unless explicitly enabled at build/deploy.
++const authDisabled = env("VITE_AUTH_ENABLED") !== "true";
+ 
+ // Broker federation creds: the deployer injects a per-app client when deployed;
+ // otherwise fall back to the shared live-preview client, which the broker accepts
+diff --git a/src/lib/simkon/comparison.ts b/src/lib/simkon/comparison.ts
+index b56cbe0..55a163c 100644
+--- a/src/lib/simkon/comparison.ts
++++ b/src/lib/simkon/comparison.ts
+@@ -1,6 +1,6 @@
+ /**
+  * Sweep fleet size untuk tab Perbandingan.
+- * Earthmoving: unit place 1–3 × dump truck 1–40.
++ * Earthmoving: unit place 1–3 × dump truck 1–20.
+  * Concreting (RMC): place units × truck mixer — crane = jumlah bucket 1–3 (crane fixed).
+  */
+ 
+@@ -19,9 +19,10 @@ import { isRmcOperation, placementMethodOf } from "./rmcEngine";
+ import { isAsphaltOperation, readAsphaltFields } from "./asphaltEngine";
+ import { isPrecastOperation, readPrecastFields } from "./precastEngine";
+ 
++import { COMPARE_HAULERS_MAX, COMPARE_HAULERS_MAX_RMC } from "./limits";
++
+ export const COMPARE_LOADERS = [1, 2, 3] as const;
+-export const COMPARE_HAULERS_MAX = 40;
+-export const COMPARE_HAULERS_MAX_RMC = 20;
++export { COMPARE_HAULERS_MAX, COMPARE_HAULERS_MAX_RMC };
+ 
+ export type ComparisonCell = {
+   num_loaders: number;
+diff --git a/src/lib/simkon/engine.ts b/src/lib/simkon/engine.ts
+index 99e7a4c..2e9a3cd 100644
+--- a/src/lib/simkon/engine.ts
++++ b/src/lib/simkon/engine.ts
+@@ -32,8 +32,13 @@ import {
+   isPrecastOperation,
+   runPrecastSimulation,
+ } from "./precastEngine";
++import {
++  MAX_DES_EVENTS,
++  clampTargetCycles,
++  clampTargetVolume,
++} from "./limits";
+ 
+-export const APP_VERSION = "1.1";
++export const APP_VERSION = "1.4";
+ export const DIESEL_KG_CO2_PER_L = 2.68;
+ 
+ export type OperationType = OperationId;
+@@ -557,6 +562,11 @@ export function defaultConfig(operation: OperationType = "earthmoving"): Simulat
+ 
+ 
+ export function runSimulation(configIn: SimulationConfig): SimulationResult {
++  configIn = {
++    ...configIn,
++    target_cycles: clampTargetCycles(configIn.target_cycles),
++    target_volume: clampTargetVolume(configIn.target_volume ?? 0),
++  };
+   if (isRmcOperation(configIn.operation)) {
+     return runRmcDualSimulation(configIn);
+   }
+@@ -716,7 +726,8 @@ export function runSimulation(configIn: SimulationConfig): SimulationResult {
+     pushEvent(0, "request_load", hid);
+   }
+ 
+-  while (events.length > 0) {
++  let guard = 0;
++  while (events.length > 0 && guard++ < MAX_DES_EVENTS) {
+     const ev = events.shift()!;
+     const { t, etype, hid } = ev;
+ 
+@@ -815,7 +826,10 @@ export function runSimulation(configIn: SimulationConfig): SimulationResult {
+     }
+   }
+ 
+-  if (!reachedCycleTarget) {
++  if (guard >= MAX_DES_EVENTS && !reachedCycleTarget) {
++    endTime = maxHorizon;
++    stopReason = "event_cap";
++  } else if (!reachedCycleTarget) {
+     endTime = maxHorizon;
+     stopReason = "duration";
+     const wantedCycles =
+diff --git a/src/lib/simkon/limits.ts b/src/lib/simkon/limits.ts
+new file mode 100644
+index 0000000..33e30cb
+--- /dev/null
++++ b/src/lib/simkon/limits.ts
+@@ -0,0 +1,21 @@
++/** Classroom-safe caps so a lecture hall of laptops stays responsive. */
++
++export const MAX_TARGET_CYCLES = 400;
++export const MAX_TARGET_VOLUME = 20_000;
++export const MAX_DES_EVENTS = 500_000;
++
++/** Fleet sweep width for the Comparison tab (button-triggered). */
++export const COMPARE_HAULERS_MAX = 20;
++export const COMPARE_HAULERS_MAX_RMC = 12;
++
++export const MAX_MULTI_SEED = 10;
++
++export function clampTargetCycles(n: number): number {
++  if (!Number.isFinite(n)) return 0;
++  return Math.min(MAX_TARGET_CYCLES, Math.max(0, Math.floor(n)));
++}
++
++export function clampTargetVolume(n: number): number {
++  if (!Number.isFinite(n)) return 0;
++  return Math.min(MAX_TARGET_VOLUME, Math.max(0, n));
++}
+diff --git a/src/lib/simkon/multiRun.ts b/src/lib/simkon/multiRun.ts
+index 000da85..82a0d77 100644
+--- a/src/lib/simkon/multiRun.ts
++++ b/src/lib/simkon/multiRun.ts
+@@ -3,6 +3,7 @@
+ import { runSimulation, type SimulationConfig, type SimulationResult } from "./engine";
+ import { computeCosts } from "./costs";
+ import { computeEmissions } from "./emissions";
++import { MAX_MULTI_SEED } from "./limits";
+ 
+ export type MultiRunSummary = {
+   n: number;
+@@ -26,9 +27,10 @@ function stats(vals: number[]) {
+ 
+ export function runMultiSeed(
+   base: SimulationConfig,
+-  n = 10,
++  n = 5,
+   seedStart?: number,
+ ): MultiRunSummary {
++  n = Math.min(MAX_MULTI_SEED, Math.max(1, Math.floor(n)));
+   const start = seedStart ?? (base.seed ?? 12345);
+   const results: SimulationResult[] = [];
+   for (let i = 0; i < n; i++) {
+diff --git a/src/lib/simkon/usage.ts b/src/lib/simkon/usage.ts
+index f8a4c78..1fbbf4b 100644
+--- a/src/lib/simkon/usage.ts
++++ b/src/lib/simkon/usage.ts
+@@ -1,14 +1,21 @@
+ /**
+  * Server functions: visitor + simulation usage stats.
+  * Persists in PGLite (preview) or Neon (DATABASE_URL).
++ *
++ * Classroom hardening:
++ *  - daily rollups instead of unbounded usage_events writes
++ *  - visit dedup (15 min) and per-visitor simulation rate limit
+  */
+ 
+ import { createServerFn } from "@tanstack/react-start";
+-import { getSql } from "@/lib/db";
++import { dbSource, getSql } from "@/lib/db";
+ import { OPERATIONS, type OperationId } from "./operations";
+ 
+ const OPS = new Set(OPERATIONS.map((o) => o.id));
+ 
++const VISIT_DEDUP_MINUTES = 15;
++const SIM_RATE_MAX_PER_DAY = 80;
++
+ function cleanVisitorId(id: unknown): string {
+   if (typeof id !== "string") return "";
+   return id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+@@ -27,6 +34,8 @@ export type UsageSnapshot = {
+   totalSimulations: number;
+   simulationsToday: number;
+   perOperation: { id: OperationId; title: string; lastRun: string | null; runs: number }[];
++  dbSource: "neon" | "pglite";
++  persistent: boolean;
+ };
+ 
+ async function ensureSchema() {
+@@ -47,24 +56,40 @@ async function ensureSchema() {
+     )
+   `);
+   await sql.query(`
+-    create table if not exists usage_events (
+-      id bigserial primary key,
++    create table if not exists usage_daily (
++      day date not null,
+       kind text not null,
+-      visitor_id text,
+-      operation_id text,
+-      created_at timestamptz not null default now()
++      visitor_id text not null default '',
++      operation_id text not null default '',
++      count integer not null default 0,
++      primary key (day, kind, visitor_id, operation_id)
+     )
+   `);
+   return sql;
+ }
+ 
++async function bumpDaily(
++  sql: Awaited<ReturnType<typeof getSql>>,
++  kind: "visit" | "simulation",
++  visitorId: string,
++  operationId = "",
++) {
++  await sql.query(
++    `insert into usage_daily (day, kind, visitor_id, operation_id, count)
++     values (current_date, $1, $2, $3, 1)
++     on conflict (day, kind, visitor_id, operation_id)
++     do update set count = usage_daily.count + 1`,
++    [kind, visitorId, operationId],
++  );
++}
++
+ export const recordVisitFn = createServerFn({ method: "POST" })
+   .validator((d: { visitorId: string }) => ({ visitorId: cleanVisitorId(d?.visitorId) }))
+   .handler(async ({ data }) => {
+     if (!data.visitorId) return { ok: false as const };
+     const sql = await ensureSchema();
+-    const existing = await sql.query<{ visit_count: number }>(
+-      "select visit_count from usage_visitors where visitor_id = $1",
++    const existing = await sql.query<{ visit_count: number; last_seen: string }>(
++      "select visit_count, last_seen::text from usage_visitors where visitor_id = $1",
+       [data.visitorId],
+     );
+     if (existing.length === 0) {
+@@ -72,16 +97,26 @@ export const recordVisitFn = createServerFn({ method: "POST" })
+         "insert into usage_visitors (visitor_id, visit_count) values ($1, 1)",
+         [data.visitorId],
+       );
+-    } else {
++      await bumpDaily(sql, "visit", data.visitorId);
++      return { ok: true as const };
++    }
++    const last = existing[0].last_seen ? new Date(existing[0].last_seen) : null;
++    const recent =
++      last &&
++      Number.isFinite(last.getTime()) &&
++      Date.now() - last.getTime() < VISIT_DEDUP_MINUTES * 60_000;
++    if (recent) {
+       await sql.query(
+-        "update usage_visitors set last_seen = now(), visit_count = visit_count + 1 where visitor_id = $1",
++        "update usage_visitors set last_seen = now() where visitor_id = $1",
+         [data.visitorId],
+       );
++      return { ok: true as const, deduped: true as const };
+     }
+     await sql.query(
+-      "insert into usage_events (kind, visitor_id) values ('visit', $1)",
++      "update usage_visitors set last_seen = now(), visit_count = visit_count + 1 where visitor_id = $1",
+       [data.visitorId],
+     );
++    await bumpDaily(sql, "visit", data.visitorId);
+     return { ok: true as const };
+   });
+ 
+@@ -93,6 +128,17 @@ export const recordSimulationFn = createServerFn({ method: "POST" })
+   .handler(async ({ data }) => {
+     if (!data.operationId) return { ok: false as const };
+     const sql = await ensureSchema();
++    if (data.visitorId) {
++      const paced = await sql.query<{ n: number }>(
++        `select coalesce(sum(count), 0)::int as n
++         from usage_daily
++         where day = current_date and kind = 'simulation' and visitor_id = $1`,
++        [data.visitorId],
++      );
++      if ((paced[0]?.n ?? 0) >= SIM_RATE_MAX_PER_DAY) {
++        return { ok: false as const, limited: true as const };
++      }
++    }
+     await sql.query(
+       `insert into usage_simulations (operation_id, run_count, last_run)
+        values ($1, 1, now())
+@@ -101,10 +147,7 @@ export const recordSimulationFn = createServerFn({ method: "POST" })
+              last_run = now()`,
+       [data.operationId],
+     );
+-    await sql.query(
+-      "insert into usage_events (kind, visitor_id, operation_id) values ('simulation', $1, $2)",
+-      [data.visitorId || null, data.operationId],
+-    );
++    await bumpDaily(sql, "simulation", data.visitorId || "", data.operationId);
+     return { ok: true as const };
+   });
+ 
+@@ -122,24 +165,22 @@ export const getUsageStatsFn = createServerFn({ method: "GET" }).handler(
+     );
+     const today = await sql.query<{ visits_today: number; unique_today: number }>(
+       `select
+-         coalesce(count(*), 0)::int as visits_today,
++         coalesce(sum(count), 0)::int as visits_today,
+          coalesce(count(distinct visitor_id), 0)::int as unique_today
+-       from usage_events
+-       where kind = 'visit' and created_at >= date_trunc('day', now())`,
++       from usage_daily
++       where kind = 'visit' and day = current_date`,
+     );
+     const sims = await sql.query<{ total: number; today: number }>(
+       `select
+          (select coalesce(sum(run_count), 0)::int from usage_simulations) as total,
+-         (select coalesce(count(*), 0)::int from usage_events
+-            where kind = 'simulation' and created_at >= date_trunc('day', now())) as today`,
++         (select coalesce(sum(count), 0)::int from usage_daily
++            where kind = 'simulation' and day = current_date) as today`,
+     );
+     const rows = await sql.query<{
+       operation_id: string;
+       run_count: number;
+       last_run: string | null;
+-    }>(
+-      "select operation_id, run_count, last_run::text from usage_simulations",
+-    );
++    }>("select operation_id, run_count, last_run::text from usage_simulations");
+     const byId = new Map(rows.map((r) => [r.operation_id, r]));
+     const perOperation = OPERATIONS.map((op) => {
+       const r = byId.get(op.id);
+@@ -158,6 +199,8 @@ export const getUsageStatsFn = createServerFn({ method: "GET" }).handler(
+       totalSimulations: sims[0]?.total ?? 0,
+       simulationsToday: sims[0]?.today ?? 0,
+       perOperation,
++      dbSource,
++      persistent: dbSource === "neon",
+     };
+   },
+ );
+diff --git a/src/lib/simkon/usageClient.ts b/src/lib/simkon/usageClient.ts
+index e0ac80d..5e2259d 100644
+--- a/src/lib/simkon/usageClient.ts
++++ b/src/lib/simkon/usageClient.ts
+@@ -97,6 +97,8 @@ export function emptySnapshot(): UsageSnapshot {
+     uniqueToday: 0,
+     totalSimulations: 0,
+     simulationsToday: 0,
++    dbSource: "pglite",
++    persistent: false,
+     perOperation: OPERATIONS.map((op) => ({
+       id: op.id,
+       title: op.shortTitle,
+@@ -118,6 +120,8 @@ export async function fetchUsageSnapshot(): Promise<UsageSnapshot> {
+       uniqueToday: local.visits > 0 ? 1 : 0,
+       totalSimulations: local.simulations,
+       simulationsToday: local.simulations,
++      dbSource: "pglite",
++      persistent: false,
+       perOperation: OPERATIONS.map((op) => ({
+         id: op.id,
+         title: op.shortTitle,
+diff --git a/src/routes/__root.tsx b/src/routes/__root.tsx
+index 0fe1b68..3762f50 100644
+--- a/src/routes/__root.tsx
++++ b/src/routes/__root.tsx
+@@ -1,6 +1,7 @@
+ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+ import { AuthProvider } from "@/lib/auth/provider";
+ import { CreatedWithGrokBanner } from "@/components/created-with-grok-banner";
++import { SiteFooter } from "@/components/simkon/SiteFooter";
+ import { UsageTracker } from "@/components/simkon/UsageTracker";
+ import appCss from "../styles.css?url";
+ 
+@@ -21,7 +22,7 @@ export const Route = createRootRoute({
+       {
+         name: "description",
+         content:
+-          "SiklOps: simulasi siklus operasi konstruksi (DES). Earthmoving, bricklaying, concreting (RMC placing).",
++          "SiklOps: simulasi siklus operasi konstruksi (DES). Earthmoving, bricklaying, concreting, tower crane, asphalt paving, precast plant.",
+       },
+       { name: "theme-color", content: "#1e3a32" },
+       { name: "application-name", content: APP_NAME },
+@@ -56,6 +57,7 @@ function RootShell() {
+         <AuthProvider>
+           <UsageTracker />
+           <Outlet />
++          <SiteFooter />
+         </AuthProvider>
+         <Scripts />
+       </body>
+diff --git a/src/routes/index.tsx b/src/routes/index.tsx
+index 86ffb08..cf6935b 100644
+--- a/src/routes/index.tsx
++++ b/src/routes/index.tsx
+@@ -466,9 +466,6 @@ function SiklOpsApp() {
+             </>
+           )}
+ 
+-          <footer className="border-t border-border pt-4 text-center text-xs text-muted-foreground">
+-            SiklOps · DES · Pembelajaran
+-          </footer>
+         </main>
+       </div>
+     </div>
+diff --git a/src/routes/login.tsx b/src/routes/login.tsx
+index 9c7c8ea..aa13869 100644
+--- a/src/routes/login.tsx
++++ b/src/routes/login.tsx
+@@ -1,4 +1,4 @@
+-import { createFileRoute, Link } from "@tanstack/react-router";
++import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
+ import { GROK_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
+ import { Button } from "@/components/ui/button";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+@@ -6,6 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
+ export const Route = createFileRoute("/login")({ component: Login });
+ 
+ function Login() {
++  if (!authEnabled) {
++    return <Navigate to="/" />;
++  }
+   return (
+     <main className="grid min-h-dvh place-items-center bg-background p-6">
+       <Card className="w-full max-w-sm">
+diff --git a/src/routes/statistik.tsx b/src/routes/statistik.tsx
+index 65c278b..85f460f 100644
+--- a/src/routes/statistik.tsx
++++ b/src/routes/statistik.tsx
+@@ -111,9 +111,24 @@ function StatistikPage() {
+           </CardContent>
+         </Card>
+ 
++        {ready && !stats.persistent ? (
++          <p className="rounded-[var(--radius-md)] border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-950">
++            Statistik memakai penyimpanan sementara (PGLite). Untuk kuliah masal,
++            set <code className="font-mono">DATABASE_URL</code> Neon pada{" "}
++            <strong>project Vercel SiklOps-web</strong> (boleh URL yang sama
++            dengan Parade Tim Kerja), lalu redeploy.
++          </p>
++        ) : null}
++        {ready && stats.persistent ? (
++          <p className="text-center text-[11px] text-muted-foreground">
++            Backend: Neon/Postgres — angka bertahan antar deploy.
++          </p>
++        ) : null}
++
+         <p className="pb-6 text-center text-xs text-muted-foreground">
+-          Satu pengunjung = satu browser. Kunjungan dihitung sekali per sesi tab.
+-          Data disimpan di server aplikasi.
++          Satu pengunjung = satu browser (ID acak). Kunjungan di-dedup 15 menit.
++          Simulasi per perangkat dibatasi 80/hari agar dashboard tidak di-spam.
++          Tidak ada nama atau email.
+         </p>
+       </main>
+     </div>
+-- 
+2.43.0
+

@@ -1,6 +1,11 @@
 /**
  * Skenario site concreting: jarak & tinggi dari titik discharge truck RMC
  * ke lokasi place. Menurunkan cycle place per metode (dolly / crane / pump).
+ *
+ * Truck supply and placing meet at one buffer. A mixer that only partly fits
+ * stays on the single pour slot with the leftover load and returns to the plant
+ * only when the drum is empty. The bottleneck is whichever is slower: truck
+ * supply (m³/h, with site waiting counted as non-productive) or placing capacity.
  */
 
 import {
@@ -17,6 +22,71 @@ import {
   type SimulationConfig,
   type SimulationResult,
 } from "./engine";
+
+export type RmcBottleneckInput = {
+  placeName: string;
+  truckName: string;
+  /** m³/h the fleet can deliver if trucks are not held at the pour. */
+  truckSupplyM3h: number;
+  /** m³/h the placing crew can take from the buffer. */
+  placeCapacityM3h: number;
+  truckUtil: number;
+  placeUtil: number;
+  /** Share of truck-fleet time spent queued or held at the pour slot. */
+  siteWaitFrac: number;
+};
+
+/**
+ * Lay rule for the concreting bottleneck.
+ * Compare truck supply with placing capacity (m³/h). The slower side is the constraint.
+ * Waiting at site is non-productive: it means the pour is not taking concrete, so it
+ * does not count as the trucks being fully used. When the two rates are close, that
+ * wait is what breaks the tie.
+ */
+export function labelRmcBottleneck(input: RmcBottleneckInput): {
+  bottleneck: string;
+  reason: string;
+} {
+  const supply = Math.max(0, input.truckSupplyM3h);
+  const place = Math.max(0, input.placeCapacityM3h);
+  const faster = Math.max(supply, place, 1e-9);
+  const gap = (faster - Math.min(supply, place)) / faster;
+  const waitPct = Math.round(input.siteWaitFrac * 100);
+  const truckPct = Math.round(input.truckUtil * 100);
+  const placePct = Math.round(input.placeUtil * 100);
+  const supplyTxt = supply.toFixed(1);
+  const placeTxt = place.toFixed(1);
+  const close = gap < 0.08;
+  // Trucks standing at the pour are not the scarce resource.
+  const heldAtPour = input.siteWaitFrac >= 0.12 && input.placeUtil + 0.05 >= input.truckUtil;
+
+  if (close && !heldAtPour) {
+    return {
+      bottleneck: "Seimbang",
+      reason:
+        `Truck supply is about ${supplyTxt} m³/h and ${input.placeName} can place about ${placeTxt} m³/h — nearly the same. ` +
+        `Trucks waited at site ${waitPct}% of the time (truck busy ${truckPct}%, place busy ${placePct}%).`,
+    };
+  }
+
+  const placeLimits = place <= supply || (heldAtPour && place <= supply * 1.15);
+  if (placeLimits) {
+    return {
+      bottleneck: input.placeName,
+      reason:
+        `${input.placeName} can place about ${placeTxt} m³/h. Trucks can supply about ${supplyTxt} m³/h when they are not waiting. ` +
+        `The pour is the constraint. Waiting at site is non-productive: trucks spent ${waitPct}% of their time there ` +
+        `(truck busy ${truckPct}%, place busy ${placePct}%).`,
+    };
+  }
+  return {
+    bottleneck: input.truckName,
+    reason:
+      `Trucks can supply about ${supplyTxt} m³/h. ${input.placeName} can place about ${placeTxt} m³/h. ` +
+      `Truck supply is the constraint. Site wait was ${waitPct}% of truck time ` +
+      `(truck busy ${truckPct}%, place busy ${placePct}%).`,
+  };
+}
 
 export type SiteScenario = {
   /** Jarak horizontal truck discharge → titik place (m) */

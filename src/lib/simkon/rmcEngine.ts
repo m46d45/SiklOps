@@ -2,7 +2,10 @@
  * Dual-cycle DES: Ready-mixed Concrete
  * Siklus A — Truck mixer: Batch (plant) → Haul ke site → Discharge ke buffer → Return plant
  * Siklus B — Pengecoran (dolly | crane bucket | pump): Fill dari buffer → Travel → Place → Return
- * Coupling: site buffer (m³). Truck antri jika buffer penuh; unit place antri jika buffer kosong.
+ * Coupling: one pour slot into the site buffer (m³).
+ * A truck that takes the slot keeps any concrete the buffer cannot accept yet and
+ * waits there until the drum is empty. Only then does it return to the plant.
+ * Other trucks queue behind that slot. Placing units queue when the buffer is empty.
  */
 
 import { Rng } from "./rng";
@@ -19,6 +22,7 @@ import {
   resolveDist,
 } from "./engine";
 import type { OperationId } from "./operations";
+import { labelRmcBottleneck } from "./concretingScenario";
 
 export type PlacementMethod = "dolly" | "crane" | "pump";
 
@@ -301,7 +305,7 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
   const config = applyRmcToConfig(configIn, { ...f, placement_method: method });
 
   const rng = new Rng(config.seed);
-  let maxHorizon = config.simulation_duration > 0 ? config.simulation_duration : 7 * 24 * 60;
+  const maxHorizon = config.simulation_duration > 0 ? config.simulation_duration : 7 * 24 * 60;
 
   let targetCycles = Math.max(0, Math.floor(config.target_cycles || 0));
   let targetVolume = Math.max(0, Number(config.target_volume) || 0);
@@ -330,12 +334,28 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
   };
 
   let buffer = 0;
-  // trucks waiting to discharge: [arrive_t, id, vol]
+  const EPS = 1e-6;
+  // trucks waiting for the single pour slot: [arrive_t, id, vol]
   const truckQueue: { t: number; id: number; vol: number }[] = [];
   // place units waiting for buffer: [ready_t, id]
   const placeWait: { t: number; id: number }[] = [];
 
-  let freeDischarge = 1; // one discharge bay at site (truck → buffer)
+  /**
+   * The one truck allowed to pour. It stays until `remaining` is gone,
+   * even when the buffer is full (holdStart set while it waits for room).
+   * `fullDt` is one discharge draw for the whole load; each chunk uses its volume share.
+   */
+  type PourSlot = {
+    id: number;
+    remaining: number;
+    load0: number;
+    fullDt: number;
+    holdStart: number | null;
+  };
+  let pourSlot: PourSlot | null = null;
+  // Reads go through this so control-flow analysis does not freeze the slot as null.
+  const currentSlot = (): PourSlot | null => pourSlot;
+  let pouring = false;
   const truckBusy: [number, number][][] = Array.from({ length: nTrucks }, () => []);
   const placeBusy: [number, number][][] = Array.from({ length: nPlace }, () => []);
   const truckWait: [number, number][][] = Array.from({ length: nTrucks }, () => []);
@@ -355,7 +375,6 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
   const activityLog: ActivityLog[] = [];
   const cycleLog: CycleLog[] = [];
 
-  let lastQ = 0;
   let qIntegral = 0;
   let maxQueue = 0;
   let lastChange = 0;
@@ -381,33 +400,81 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
     if (e > s) activityLog.push({ hauler_id: hid, phase, start: s, end: e, duration: e - s });
   };
 
-  const tryDischarge = (now: number) => {
-    while (freeDischarge > 0 && truckQueue.length > 0 && !reached) {
-      const next = truckQueue[0];
-      const room = bufferMax - buffer;
-      if (room < 1e-9) break; // buffer full
-      truckQueue.shift();
-      integrateQ(now);
-      snapQ(now);
-      const wait = Math.max(0, now - next.t);
+  const closeHold = (now: number) => {
+    if (!pourSlot || pourSlot.holdStart == null) return;
+    const start = pourSlot.holdStart;
+    pourSlot.holdStart = null;
+    const wait = Math.max(0, now - start);
+    if (wait > 1e-9) {
       waitSamples.push(wait);
-      if (wait > 1e-9) {
-        truckWait[next.id].push([next.t, now]);
-        recAct(next.id, "wait", next.t, wait);
+      truckWait[pourSlot.id].push([start, now]);
+      recAct(pourSlot.id, "wait", start, wait);
+    }
+  };
+
+  const beginReturn = (id: number, now: number) => {
+    const ret = sampleTruck(rng, config, "return", f.truck_return_mean);
+    truckBusy[id].push([now, now + ret]);
+    recAct(id, "return", now, ret);
+    push({ t: now + ret, kind: "truck_return_done", id });
+  };
+
+  /**
+   * One pour slot. Admit the next queued truck when the slot is free, pour
+   * min(remaining, free buffer), and if concrete is left keep the truck there
+   * until placing makes room. Return to the plant only when the drum is empty.
+   */
+  const tryDischarge = (now: number) => {
+    if (reached || pouring) return;
+    while (!pouring && !reached) {
+      if (pourSlot && pourSlot.remaining <= EPS) {
+        closeHold(now);
+        const id = pourSlot.id;
+        pourSlot = null;
+        beginReturn(id, now);
+        continue;
       }
-      arrivalTimes.push(next.t);
-      const vol = Math.min(next.vol, room);
-      freeDischarge -= 1;
-      const dt = sampleTruck(rng, config, "discharge", f.truck_discharge_mean);
+      if (!pourSlot) {
+        if (truckQueue.length === 0) return;
+        const next = truckQueue.shift()!;
+        integrateQ(now);
+        snapQ(now);
+        const wait = Math.max(0, now - next.t);
+        if (wait > 1e-9) {
+          waitSamples.push(wait);
+          truckWait[next.id].push([next.t, now]);
+          recAct(next.id, "wait", next.t, wait);
+        }
+        arrivalTimes.push(next.t);
+        const fullDt = sampleTruck(rng, config, "discharge", f.truck_discharge_mean);
+        pourSlot = {
+          id: next.id,
+          remaining: next.vol,
+          load0: Math.max(next.vol, EPS),
+          fullDt,
+          holdStart: null,
+        };
+      }
+      const room = bufferMax - buffer;
+      if (room <= EPS) {
+        if (pourSlot.holdStart == null) pourSlot.holdStart = now;
+        return;
+      }
+      closeHold(now);
+      const vol = Math.min(pourSlot.remaining, room);
+      // Discharge time scales with volume so a split load still takes one discharge, plus wait.
+      const dt = Math.max(pourSlot.fullDt * (vol / pourSlot.load0), 1e-4);
+      pouring = true;
       serviceTimes.push(dt);
-      truckBusy[next.id].push([now, now + dt]);
-      recAct(next.id, "dump", now, dt); // discharge mapped as dump phase
-      push({ t: now + dt, kind: "truck_discharge_done", id: next.id, vol });
+      truckBusy[pourSlot.id].push([now, now + dt]);
+      recAct(pourSlot.id, "dump", now, dt);
+      push({ t: now + dt, kind: "truck_discharge_done", id: pourSlot.id, vol });
+      return;
     }
   };
 
   const tryStartPlace = (now: number) => {
-    while (placeWait.length > 0 && buffer > 1e-9 && !reached) {
+    while (placeWait.length > 0 && buffer > EPS && !reached) {
       const unit = placeWait.shift()!;
       const wait = Math.max(0, now - unit.t);
       if (wait > 1e-9) {
@@ -415,8 +482,6 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
       }
       const vol = Math.min(placeCap, buffer);
       buffer -= vol;
-      // maybe free a waiting truck
-      tryDischarge(now);
       const fill = samplePlace(rng, config, "fill", f.place_fill_mean);
       placeBusy[unit.id].push([now, now + fill]);
       recAct(unit.id + 1000, "load", now, fill);
@@ -456,14 +521,15 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
       snapQ(now);
       tryDischarge(now);
     } else if (ev.kind === "truck_discharge_done") {
-      freeDischarge += 1;
+      const slot = currentSlot();
+      if (slot && slot.id === ev.id) {
+        slot.remaining = Math.max(0, slot.remaining - ev.vol);
+      }
+      pouring = false;
       buffer = Math.min(bufferMax, buffer + ev.vol);
+      // Placing takes what just landed, then the same truck pours again or goes home.
       tryStartPlace(now);
       tryDischarge(now);
-      const ret = sampleTruck(rng, config, "return", f.truck_return_mean);
-      truckBusy[ev.id].push([now, now + ret]);
-      recAct(ev.id, "return", now, ret);
-      push({ t: now + ret, kind: "truck_return_done", id: ev.id });
     } else if (ev.kind === "truck_return_done") {
       const bt = sampleTruck(rng, config, "batch", f.truck_batch_mean);
       truckBusy[ev.id].push([now, now + bt]);
@@ -518,12 +584,36 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
     } else if (ev.kind === "place_return_done") {
       placeWait.push({ t: now, id: ev.id });
       tryStartPlace(now);
+      // Room just opened in the buffer; a truck holding the pour slot can continue.
+      tryDischarge(now);
     }
   }
 
   if (!reached) {
     stopReason = "duration_cap";
     endTime = maxHorizon;
+  }
+  // Site wait still open at the stop time counts as non-productive truck time.
+  const held = currentSlot();
+  if (held && held.holdStart != null && held.holdStart < endTime) {
+    const start = held.holdStart;
+    held.holdStart = null;
+    const wait = endTime - start;
+    if (wait > 1e-9) {
+      waitSamples.push(wait);
+      truckWait[held.id].push([start, endTime]);
+      recAct(held.id, "wait", start, wait);
+    }
+  }
+  for (const queued of truckQueue) {
+    if (queued.t < endTime) {
+      const wait = endTime - queued.t;
+      if (wait > 1e-9) {
+        waitSamples.push(wait);
+        truckWait[queued.id].push([queued.t, endTime]);
+        recAct(queued.id, "wait", queued.t, wait);
+      }
+    }
   }
   integrateQ(endTime);
 
@@ -553,23 +643,28 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
   const totalWait = tWait.sum;
   const throughput = (totalVolume / horizon) * 60;
 
-  // bottleneck
-  let bottleneck: string;
-  let reason: string;
-  const labels = resourceLabels(config.operation);
-  if (placeUtil >= truckUtil && placeUtil >= 0.75) {
-    bottleneck = labels.loader;
-    reason = `Utilisasi unit pengecoran (${(placeUtil * 100).toFixed(0)}%) tinggi — metode place membatasi.`;
-  } else if (truckUtil >= 0.75) {
-    bottleneck = labels.hauler;
-    reason = `Utilisasi truck mixer (${(truckUtil * 100).toFixed(0)}%) tinggi — supply RMC dari plant membatasi.`;
-  } else if (avgWait > 1 && avgQ > 0.5) {
-    bottleneck = "Buffer / discharge";
-    reason = `Truck sering antri discharge (Wq ${avgWait.toFixed(1)} mnt) — buffer site atau laju place.`;
-  } else {
-    bottleneck = "Seimbang / under-utilized";
-    reason = `Truck util ${(truckUtil * 100).toFixed(0)}%, place util ${(placeUtil * 100).toFixed(0)}%.`;
-  }
+  // Bottleneck: compare how fast trucks can deliver with how fast the pour can take it.
+  // Waiting at site is non-productive — it means concrete is arriving faster than it is placed,
+  // so a high "truck busy" figure (which ignores that queue) must not win the label by itself.
+  const labels = resourceLabels(config.operation, method);
+  const truckCycleMean =
+    f.truck_batch_mean + f.truck_haul_mean + f.truck_discharge_mean + f.truck_return_mean;
+  const placeCycleMean =
+    f.place_fill_mean + f.place_travel_mean + f.place_place_mean + f.place_return_mean;
+  const truckSupplyM3h = truckCycleMean > 0 ? (nTrucks * truckCap * 60) / truckCycleMean : 0;
+  const placeCapacityM3h = placeCycleMean > 0 ? (nPlace * placeCap * 60) / placeCycleMean : 0;
+  const siteWaitFrac = totalWait / (nTrucks * horizon);
+  const named = labelRmcBottleneck({
+    placeName: labels.loader,
+    truckName: labels.hauler,
+    truckSupplyM3h,
+    placeCapacityM3h,
+    truckUtil,
+    placeUtil,
+    siteWaitFrac,
+  });
+  const bottleneck = named.bottleneck;
+  const reason = named.reason;
 
   // map result: loader=place, hauler=truck for existing panels
   return {
@@ -597,7 +692,7 @@ export function runRmcDualSimulation(configIn: SimulationConfig): SimulationResu
     completed_load_requests: arrivalTimes.length,
     censored_waits: truckQueue.length,
     bottleneck,
-    bottleneck_reason: reason + ` Metode: ${rmcMethodLabel(method)}. Dual-cycle RMC↔plant + place.`,
+    bottleneck_reason: reason + ` Method: ${rmcMethodLabel(method)}. Dual-cycle RMC↔plant + place.`,
     timeline_volume: timelineVolume,
     queue_over_time: queueOverTime,
     activity_log: activityLog,

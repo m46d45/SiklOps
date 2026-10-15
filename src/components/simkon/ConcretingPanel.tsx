@@ -44,6 +44,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -1123,73 +1124,53 @@ export function ConcretingPanel() {
                   </div>
 
                   <div className="grid gap-4 lg:grid-cols-2">
-                    <ChartCard title="Throughput (m³/jam)">
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart
-                          data={compare.map((r) => ({
-                            name: METHOD_PROFILES[r.method].shortLabel,
-                            v: r.result.throughput_per_hour,
-                          }))}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                          <YAxis tick={{ fontSize: 12 }} />
-                          <Tooltip />
-                          <Bar dataKey="v" name="m³/jam" fill="var(--color-chart-1)" radius={4} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </ChartCard>
-                    <ChartCard title="Biaya satuan (ribu Rp/m³)">
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart
-                          data={compare.map((r) => ({
-                            name: METHOD_PROFILES[r.method].shortLabel,
-                            v: r.unit_cost / 1000,
-                          }))}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                          <YAxis tick={{ fontSize: 12 }} />
-                          <Tooltip />
-                          <Bar dataKey="v" name="rb Rp/m³" fill="var(--color-chart-2)" radius={4} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </ChartCard>
-                    <ChartCard title="Utilisasi resource (%)">
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart
-                          data={compare.map((r) => ({
-                            name: METHOD_PROFILES[r.method].shortLabel,
-                            place: r.result.loader_utilization * 100,
-                            truck: r.result.hauler_utilization * 100,
-                          }))}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                          <YAxis tick={{ fontSize: 12 }} domain={[0, 100]} />
-                          <Tooltip />
-                          <Legend />
-                          <Bar dataKey="place" name="Place" fill="var(--color-chart-1)" radius={4} />
-                          <Bar dataKey="truck" name="Truck" fill="var(--color-chart-3)" radius={4} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </ChartCard>
-                    <ChartCard title="Emisi satuan (kg CO₂e/m³)">
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart
-                          data={compare.map((r) => ({
-                            name: METHOD_PROFILES[r.method].shortLabel,
-                            v: r.unit_emission,
-                          }))}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                          <YAxis tick={{ fontSize: 12 }} />
-                          <Tooltip />
-                          <Bar dataKey="v" name="kg/m³" fill="var(--color-chart-4)" radius={4} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </ChartCard>
+                    <CompareBars
+                      title="Throughput (m³/jam)"
+                      yDigits={0}
+                      data={compare.map((r) => ({
+                        name: METHOD_PROFILES[r.method].shortLabel,
+                        v: r.result.throughput_per_hour,
+                      }))}
+                      series={[
+                        { key: "v", name: "m³/jam", fill: "var(--color-chart-1)", digits: 1, suffix: " m³/jam" },
+                      ]}
+                    />
+                    <CompareBars
+                      title="Biaya satuan (ribu Rp/m³)"
+                      yDigits={0}
+                      data={compare.map((r) => ({
+                        name: METHOD_PROFILES[r.method].shortLabel,
+                        v: r.unit_cost / 1000,
+                      }))}
+                      series={[
+                        { key: "v", name: "rb Rp/m³", fill: "var(--color-chart-2)", digits: 0, suffix: " rb" },
+                      ]}
+                    />
+                    <CompareBars
+                      title="Utilisasi resource (%)"
+                      yDigits={0}
+                      domain={[0, 100]}
+                      data={compare.map((r) => ({
+                        name: METHOD_PROFILES[r.method].shortLabel,
+                        place: r.result.loader_utilization * 100,
+                        truck: r.result.hauler_utilization * 100,
+                      }))}
+                      series={[
+                        { key: "place", name: "Place", fill: "var(--color-chart-1)", digits: 0, suffix: "%" },
+                        { key: "truck", name: "Truck", fill: "var(--color-chart-3)", digits: 0, suffix: "%" },
+                      ]}
+                    />
+                    <CompareBars
+                      title="Emisi satuan (kg CO₂e/m³)"
+                      yDigits={0}
+                      data={compare.map((r) => ({
+                        name: METHOD_PROFILES[r.method].shortLabel,
+                        v: r.unit_emission,
+                      }))}
+                      series={[
+                        { key: "v", name: "kg/m³", fill: "var(--color-chart-4)", digits: 2, suffix: " kg" },
+                      ]}
+                    />
                   </div>
 
                   <ul className="space-y-2 text-xs text-muted-foreground">
@@ -1213,6 +1194,73 @@ export function ConcretingPanel() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+type CompareSeries = {
+  key: string;
+  name: string;
+  fill: string;
+  digits: number;
+  suffix: string;
+};
+
+function CompareBars({
+  title,
+  data,
+  series,
+  yDigits,
+  domain = [0, "auto"],
+}: {
+  title: string;
+  data: Record<string, string | number>[];
+  series: CompareSeries[];
+  yDigits: number;
+  domain?: [number, number | "auto"];
+}) {
+  return (
+    <ChartCard title={title}>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={data} margin={{ top: 22, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+          <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+          <YAxis
+            tick={{ fontSize: 11 }}
+            domain={domain}
+            width={40}
+            allowDecimals={yDigits > 0}
+            tickFormatter={(v) => formatNum(Number(v), yDigits)}
+          />
+          <Tooltip
+            formatter={(value, name) => {
+              const hit = series.find((s) => s.name === name);
+              return [
+                `${formatNum(Number(value), hit?.digits ?? yDigits)}${hit?.suffix ?? ""}`,
+                name,
+              ];
+            }}
+          />
+          {series.length > 1 ? <Legend /> : null}
+          {series.map((s) => (
+            <Bar
+              key={s.key}
+              dataKey={s.key}
+              name={s.name}
+              fill={s.fill}
+              radius={4}
+              isAnimationActive={false}
+            >
+              <LabelList
+                dataKey={s.key}
+                position="top"
+                formatter={(v: number) => formatNum(Number(v), s.digits)}
+                style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
+              />
+            </Bar>
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
   );
 }
 

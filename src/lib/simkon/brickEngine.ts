@@ -190,7 +190,7 @@ type EvKind =
   | "mason_free"
   | "lay_done";
 
-type Ev = { t: number; kind: EvKind; id: number; seq: number; n?: number };
+type Ev = { t: number; kind: EvKind; id: number; seq: number; n?: number; wait?: number; dur?: number };
 
 function sample(
   rng: Rng,
@@ -342,10 +342,14 @@ export function runBrickTripleSimulation(configIn: SimulationConfig): Simulation
         }
         continue;
       }
+      let waited = 0;
       if (masonWaitStart[id] >= 0) {
-        const w = Math.max(0, now - masonWaitStart[id]);
-        waitSamples.push(w);
-        if (w > 1e-9) markBusy(masonWaitInt, id, masonWaitStart[id], w);
+        waited = Math.max(0, now - masonWaitStart[id]);
+        waitSamples.push(waited);
+        if (waited > 1e-9) {
+          markBusy(masonWaitInt, id, masonWaitStart[id], waited);
+          recAct(1000 + id, "mason_wait", masonWaitStart[id], waited);
+        }
         masonWaitStart[id] = -1;
         masonsWaiting = Math.max(0, masonsWaiting - 1);
         integrateQ(now);
@@ -361,7 +365,7 @@ export function runBrickTripleSimulation(configIn: SimulationConfig): Simulation
       markBusy(masonBusyInt, id, now, d);
       recAct(1000 + id, "lay", now, d);
       serviceTimes.push(d);
-      push({ t: now + d, kind: "lay_done", id, n: layN });
+      push({ t: now + d, kind: "lay_done", id, n: layN, wait: waited, dur: d });
     }
   };
 
@@ -435,23 +439,26 @@ export function runBrickTripleSimulation(configIn: SimulationConfig): Simulation
       case "lay_done": {
         const bricks = ev.n ?? layN;
         const vol = bricks / bpm2;
+        const layDur = Math.max(0.05, ev.dur ?? f.lay_mean);
+        const waited = Math.max(0, ev.wait ?? 0);
+        const cycle = Math.max(0.05, waited + layDur);
         totalTrips += 1;
         totalVolume += vol;
         timelineVolume.push([now, totalVolume]);
         cycleLog.push({
           hauler_id: 1000 + ev.id,
           trip: totalTrips,
-          wait: 0,
-          load: f.lay_mean,
+          wait: waited,
+          load: layDur,
           haul: 0,
           dump: 0,
           return: 0,
-          cycle_time: f.lay_mean,
-          productive_time: f.lay_mean,
+          cycle_time: cycle,
+          productive_time: layDur,
           finish_time: now,
           return_finish: now,
           volume: vol,
-          productivity: vol > 0 ? vol / Math.max(1e-9, f.lay_mean / 60) : 0,
+          productivity: vol > 0 ? (vol / cycle) * 60 : 0,
         });
 
         if (!reached) {

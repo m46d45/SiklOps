@@ -44,17 +44,24 @@ export function buildResourceUtilByCycle(result: SimulationResult): UtilByCycleP
   );
   const finishTimes = cycles.map((c) => c.finish_time);
 
+  const brick = result.operation === "bricklaying";
   const loadIv: [number, number][] = [];
   const haulBusyIv: [number, number][] = [];
   const waitIv: [number, number][] = [];
 
   for (const a of result.activity_log) {
     const iv: [number, number] = [a.start, a.end];
-    if (a.phase === "load") loadIv.push(iv);
-    if (a.phase === "load" || a.phase === "haul" || a.phase === "dump" || a.phase === "return") {
-      haulBusyIv.push(iv);
+    if (brick) {
+      if (a.phase === "lay") loadIv.push(iv);
+      if (a.phase === "fetch" || a.phase === "lift" || a.phase === "mortar") haulBusyIv.push(iv);
+      if (a.phase === "mason_wait") waitIv.push(iv);
+    } else {
+      if (a.phase === "load") loadIv.push(iv);
+      if (a.phase === "load" || a.phase === "haul" || a.phase === "dump" || a.phase === "return") {
+        haulBusyIv.push(iv);
+      }
+      if (a.phase === "wait") waitIv.push(iv);
     }
-    if (a.phase === "wait") waitIv.push(iv);
   }
 
   const rows: UtilByCyclePoint[] = [
@@ -76,9 +83,10 @@ export function buildResourceUtilByCycle(result: SimulationResult): UtilByCycleP
     const loadB = busyIn(loadIv, 0, t);
     const haulB = busyIn(haulBusyIv, 0, t);
     const waitB = busyIn(waitIv, 0, t);
+    const waitUnits = brick ? nLoaders : nHaulers;
     const loaderCum = t > 0 ? Math.min(1, loadB / (nLoaders * t)) : 0;
     const haulerCum = t > 0 ? Math.min(1, haulB / (nHaulers * t)) : 0;
-    const waitCum = t > 0 ? Math.min(1, waitB / (nHaulers * t)) : 0;
+    const waitCum = t > 0 ? Math.min(1, waitB / (waitUnits * t)) : 0;
 
     const dt = t - prevT;
     const loadW = busyIn(loadIv, prevT, t);
@@ -86,7 +94,7 @@ export function buildResourceUtilByCycle(result: SimulationResult): UtilByCycleP
     const waitW = busyIn(waitIv, prevT, t);
     const loaderCy = dt > 0 ? Math.min(1, loadW / (nLoaders * dt)) : 0;
     const haulerCy = dt > 0 ? Math.min(1, haulW / (nHaulers * dt)) : 0;
-    const waitCy = dt > 0 ? Math.min(1, waitW / (nHaulers * dt)) : 0;
+    const waitCy = dt > 0 ? Math.min(1, waitW / (waitUnits * dt)) : 0;
 
     rows.push({
       siklus: i + 1,

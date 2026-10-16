@@ -270,7 +270,9 @@ export function whatIfTips(result: SimulationResult): string[] {
   }
   tips.push("Pakai multi-run (beberapa seed) untuk melihat sebaran throughput/biaya/emisi.");
   tips.push("Cek sweet spot: min biaya satuan vs min emisi satuan bisa di fleet berbeda.");
-  tips.push(`Bandingkan match factor dengan jumlah ${H} ideal teori di Feedback.`);
+  if (result.operation !== "bricklaying") {
+    tips.push(`Bandingkan match factor dengan jumlah ${H} ideal teori di Feedback.`);
+  }
   return tips;
 }
 

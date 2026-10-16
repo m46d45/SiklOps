@@ -33,6 +33,7 @@ import { computeEmissions, formatKg } from "@/lib/simkon/emissions";
 import { detectSteadyState } from "@/lib/simkon/steadyState";
 import { runMultiSeed, type MultiRunSummary } from "@/lib/simkon/multiRun";
 import { phaseLabelsFor } from "@/lib/simkon/operations";
+import { brickTheoreticalThroughput } from "@/lib/simkon/brickEngine";
 import { formatNum, formatPct } from "@/lib/utils";
 
 const PHASE_COLORS: Record<string, string> = {
@@ -101,6 +102,19 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
     }
   })();
 
+  const isBrick = result.operation === "bricklaying";
+  const brickTheory = isBrick ? brickTheoreticalThroughput(result.config) : null;
+  const layTheory = brickTheory?.lay ?? 0;
+  const vsLay = layTheory > 1e-9 ? result.throughput_per_hour / layTheory : 0;
+  const meanCycleWait =
+    result.cycle_log.length > 0
+      ? result.cycle_log.reduce((s, c) => s + c.wait, 0) / result.cycle_log.length
+      : 0;
+  const meanLay =
+    result.cycle_log.length > 0
+      ? result.cycle_log.reduce((s, c) => s + c.load, 0) / result.cycle_log.length
+      : 0;
+
   const avg = result.avg_cycle_components;
   const phasePie = PHASE_ORDER.filter((p) => avg[p] != null).map((p) => ({
     name: PHASE_LABELS[p],
@@ -130,13 +144,16 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
   }));
 
   // Mulai dari siklus 0 (produktivitas 0) agar kurva naik dari origin
+  const prodPeak = Math.max(0, ...result.cycle_log.map((c) => c.productivity), 0);
+  const prodStep = prodPeak >= 20 ? 10 : 100;
+  const roundProd = (n: number) => Math.round(n * prodStep) / prodStep;
   const learningFromLog = result.cycle_log.map((c, i) => {
     const window = result.cycle_log.slice(Math.max(0, i - 4), i + 1);
     const prod = window.reduce((s, x) => s + x.productivity, 0) / window.length;
     return {
       trip: c.trip,
-      productivity: Math.round(c.productivity * 10) / 10,
-      rolling: Math.round(prod * 10) / 10,
+      productivity: roundProd(c.productivity),
+      rolling: roundProd(prod),
     };
   });
   const learning =
@@ -220,22 +237,32 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
               value={formatNum(result.max_queue_length, 0)}
             />
             <MetricCard
-              label="Match factor"
-              value={formatNum(caps.match, 2)}
-              hint="Kap. hauling / kap. loading (≈1 seimbang)"
+              label={isBrick ? `Laju pasang teori (${unit}/jam)` : "Match factor"}
+              value={isBrick ? formatNum(layTheory, 2) : formatNum(caps.match, 2)}
+              hint={
+                isBrick
+                  ? "Kapasitas tukang jika tidak menunggu bata atau mortar"
+                  : "Kap. hauling / kap. loading (≈1 seimbang)"
+              }
             />
             <MetricCard
-              label="Gap sim vs teori"
+              label={isBrick ? "Throughput / laju pasang" : "Gap sim vs teori"}
               value={
-                caps.loaderProd > 0 || caps.haulerProd > 0
-                  ? formatPct(
-                      1 -
-                        result.throughput_per_hour /
-                          Math.max(1e-9, Math.min(caps.loaderProd, caps.haulerProd)),
-                    )
-                  : "—"
+                isBrick
+                  ? formatNum(vsLay, 2)
+                  : caps.loaderProd > 0 || caps.haulerProd > 0
+                    ? formatPct(
+                        1 -
+                          result.throughput_per_hour /
+                            Math.max(1e-9, Math.min(caps.loaderProd, caps.haulerProd)),
+                      )
+                    : "—"
               }
-              hint="1 − throughput_sim / min(kap. teori)"
+              hint={
+                isBrick
+                  ? "1 = tukang penuh memasang, tanpa tunggu bahan"
+                  : "1 − throughput_sim / min(kap. teori)"
+              }
             />
             <MetricCard
               label="Waktu ke target"
@@ -358,7 +385,9 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
                     tick={{ fontSize: 11 }}
                     domain={[0, "auto"]}
                     width={56}
-                    tickFormatter={(v) => Number(v).toFixed(0)}
+                    tickFormatter={(v) =>
+                      Number(v).toFixed(prodPeak >= 20 ? 0 : prodPeak >= 2 ? 1 : 2)
+                    }
                     label={{
                       value: `${unit}/jam`,
                       angle: -90,
@@ -380,7 +409,7 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
                     dataKey="productivity"
                     name={`Per siklus (${unit}/jam)`}
                     stroke="#1f4d3a"
-                    dot={{ r: 3, fill: "#1f4d3a", strokeWidth: 0 }}
+                    dot={learning.length > 80 ? false : { r: 3, fill: "#1f4d3a", strokeWidth: 0 }}
                     activeDot={{ r: 5 }}
                     strokeWidth={3}
                   />
@@ -409,22 +438,38 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
               value={ss.ss_mean != null ? formatNum(ss.ss_mean, 1) : "—"}
               hint={ss.ss_cv != null ? `CV zona ${(ss.ss_cv * 100).toFixed(1)}%` : undefined}
             />
-            <MetricCard
-              label={`${labels.hauler} ideal (teori)`}
-              value={formatNum(idealTrucks, 0)}
-              hint={`≈ cycle/load × ${labels.loader.toLowerCase()} (match ~1)`}
-            />
-            <MetricCard
-              label="Match factor"
-              value={formatNum(caps.match, 2)}
-              hint={
-                caps.match < 0.9
-                  ? `${labels.hauler} kurang`
-                  : caps.match > 1.1
-                    ? `${labels.hauler} berlebih`
-                    : "relatif seimbang"
-              }
-            />
+            {isBrick ? (
+              <MetricCard
+                label="Tunggu / siklus pasang"
+                value={`${formatNum(meanCycleWait, 2)} mnt`}
+                hint="Rata-rata tukang menunggu bahan sebelum pasang"
+              />
+            ) : (
+              <MetricCard
+                label={`${labels.hauler} ideal (teori)`}
+                value={formatNum(idealTrucks, 0)}
+                hint={`≈ cycle/load × ${labels.loader.toLowerCase()} (match ~1)`}
+              />
+            )}
+            {isBrick ? (
+              <MetricCard
+                label="Durasi pasang"
+                value={`${formatNum(meanLay, 2)} mnt`}
+                hint="Waktu pasang terukur per siklus, bukan angka input"
+              />
+            ) : (
+              <MetricCard
+                label="Match factor"
+                value={formatNum(caps.match, 2)}
+                hint={
+                  caps.match < 0.9
+                    ? `${labels.hauler} kurang`
+                    : caps.match > 1.1
+                      ? `${labels.hauler} berlebih`
+                      : "relatif seimbang"
+                }
+              />
+            )}
           </div>
 
           <Card className="rounded-[var(--radius-xl)]">
@@ -762,11 +807,20 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
               <CardTitle className="text-sm">Saran desain</CardTitle>
               <CardDescription>
                 Berdasarkan bottleneck <Badge variant="warn" className="mx-1 align-middle">{result.bottleneck}</Badge>
-                dan match factor — coba what-if lalu jalankan ulang.
+                {isBrick ? " — coba what-if lalu jalankan ulang." : " dan match factor — coba what-if lalu jalankan ulang."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {isBrick && brickTheory ? (
+                  <>
+                    <MetricCard label={`Fetch (${unit}/jam)`} value={formatNum(brickTheory.fetch, 2)} hint="Perkiraan jika helper bagi waktu rata" />
+                    <MetricCard label={`Lift bata (${unit}/jam)`} value={formatNum(brickTheory.lift, 2)} hint="Perkiraan jika helper bagi waktu rata" />
+                    <MetricCard label={`Mortar (${unit}/jam)`} value={formatNum(brickTheory.mortar, 2)} hint="Perkiraan jika helper bagi waktu rata" />
+                    <MetricCard label={`Pasang (${unit}/jam)`} value={formatNum(brickTheory.lay, 2)} hint="Kapasitas tukang tanpa menunggu bahan" />
+                  </>
+                ) : (
+                  <>
                 <MetricCard
                   label={`Kap. ${labels.loader} (${unit}/jam)`}
                   value={formatNum(caps.loaderProd, 1)}
@@ -785,6 +839,8 @@ export function ResultsPanel({ result }: { result: SimulationResult }) {
                   value={formatNum(idealTrucks, 0)}
                   hint={`Aktual ${result.config.num_haulers} · selisih ${idealTrucks - result.config.num_haulers}`}
                 />
+                  </>
+                )}
               </div>
               <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
                 {tips.map((tip) => (

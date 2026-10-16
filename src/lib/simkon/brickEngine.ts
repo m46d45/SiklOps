@@ -582,6 +582,32 @@ export function runBrickTripleSimulation(configIn: SimulationConfig): Simulation
   };
 }
 
+/**
+ * Batas atas tanpa antrian: helper mengerjakan fetch + lift + mortar berurutan
+ * per batch, tukang hanya memasang. Sistem = min(suplai helper, laju pasang).
+ */
+export function brickBalanceTheory(
+  cfg: SimulationConfig,
+  numMasons?: number,
+  numHelpers?: number,
+): { helper: number; lay: number; system: number } {
+  const f = readBrickFields({
+    ...cfg,
+    ...(numMasons != null ? { num_masons: numMasons, num_loaders: numMasons } : {}),
+    ...(numHelpers != null ? { num_helpers: numHelpers, num_haulers: numHelpers } : {}),
+  });
+  const m2Batch = f.batch_bricks / f.bricks_per_m2;
+  const mortarMin =
+    f.mortar_mean * (f.batch_bricks / Math.max(1, f.mortar_covers_bricks));
+  const helperMin = Math.max(0.2, f.fetch_mean + f.lift_mean + mortarMin);
+  const helper = (f.num_helpers * 60 * m2Batch) / helperMin;
+  const lay =
+    f.lay_mean > 0
+      ? ((f.num_masons * 60) / f.lay_mean) * (f.lay_bricks_per_cycle / f.bricks_per_m2)
+      : 0;
+  return { helper, lay, system: Math.min(helper, lay) };
+}
+
 export function brickTheoreticalThroughput(cfg: SimulationConfig): {
   fetch: number;
   lift: number;

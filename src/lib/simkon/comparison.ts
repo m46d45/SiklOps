@@ -1,6 +1,6 @@
 /**
  * Sweep fleet size untuk tab Perbandingan.
- * Earthmoving: unit place 1–3 × dump truck 1–20.
+ * Earthmoving: unit place 1–3 × dump truck 1–40.
  * Concreting (RMC): place units × truck mixer — crane = jumlah bucket 1–3 (crane fixed).
  */
 
@@ -17,12 +17,12 @@ import { computeCosts } from "./costs";
 import { computeEmissions } from "./emissions";
 import { isRmcOperation, placementMethodOf } from "./rmcEngine";
 import { isAsphaltOperation, readAsphaltFields } from "./asphaltEngine";
+import { isBrickOperation, brickBalanceTheory } from "./brickEngine";
 import { isPrecastOperation, readPrecastFields } from "./precastEngine";
 
-import { COMPARE_HAULERS_MAX, COMPARE_HAULERS_MAX_RMC } from "./limits";
-
 export const COMPARE_LOADERS = [1, 2, 3] as const;
-export { COMPARE_HAULERS_MAX, COMPARE_HAULERS_MAX_RMC };
+export const COMPARE_HAULERS_MAX = 40;
+export const COMPARE_HAULERS_MAX_RMC = 20;
 
 export type ComparisonCell = {
   num_loaders: number;
@@ -179,6 +179,25 @@ export function theoreticalThroughput(
     };
   }
 
+  if (isBrickOperation(base.operation)) {
+    const b = brickBalanceTheory(base, numLoaders, numHaulers);
+    const raw = base as SimulationConfig & {
+      fetch_mean?: number;
+      lift_mean?: number;
+      mortar_mean?: number;
+    };
+    const fMean =
+      (raw.fetch_mean ?? base.return_time_mean ?? 0) +
+      (raw.lift_mean ?? base.haul_time_mean ?? 0) +
+      (raw.mortar_mean ?? base.dump_time_mean ?? 0);
+    return {
+      system: b.system,
+      loader: b.lay,
+      hauler: b.helper,
+      cycleMin: Math.max(0.2, fMean),
+    };
+  }
+
   const payload = Math.max(0.01, base.hauler_capacity_m3 ?? base.payload_per_trip ?? 1);
   const loadMean = expectedMean(
     resolveDist(base, base.load_dist, base.load_time_mean),
@@ -208,6 +227,16 @@ function cellFromResult(
 ): ComparisonCell {
   const costs = computeCosts(r);
   const em = computeEmissions(r);
+  let wait_cost = costs.cost_wait;
+  let wait_unit_cost = costs.wait_unit_cost;
+  if (r.operation === "bricklaying") {
+    const hours = Math.max(0, r.simulated_minutes / 60);
+    const masonIdle = Math.max(0, nL * hours * (1 - r.loader_utilization));
+    const helperIdle = Math.max(0, nH * hours * (1 - r.hauler_utilization));
+    wait_cost = masonIdle * costs.loader_rate + helperIdle * costs.hauler_rate;
+    const vol = Math.max(0, r.total_volume);
+    wait_unit_cost = vol > 1e-9 ? wait_cost / vol : 0;
+  }
   return {
     num_loaders: nL,
     num_haulers: nH,
@@ -224,8 +253,8 @@ function cellFromResult(
     total_volume: r.total_volume,
     bottleneck: r.bottleneck,
     unit_cost: costs.unit_cost,
-    wait_cost: costs.cost_wait,
-    wait_unit_cost: costs.wait_unit_cost,
+    wait_cost,
+    wait_unit_cost,
     cost_total: costs.cost_total,
     unit_emission: em.unit_emission,
     emission_wait: em.emission_wait,
@@ -241,6 +270,7 @@ function cellFromResult(
 export function compareLoaderSeries(base: SimulationConfig): number[] {
   if (isAsphaltOperation(base.operation)) return [1, 2, 3];
   if (isPrecastOperation(base.operation)) return [1, 2, 3];
+  if (isBrickOperation(base.operation)) return [1, 2, 3, 4];
   if (!isRmcOperation(base.operation)) return [...COMPARE_LOADERS];
   const method = placementMethodOf(
     base.operation,
@@ -261,7 +291,9 @@ export function runComparisonGrid(base: SimulationConfig): ComparisonGrid {
       ? 20
       : isPrecastOperation(base.operation)
         ? 12
-        : COMPARE_HAULERS_MAX;
+        : isBrickOperation(base.operation)
+          ? 8
+          : COMPARE_HAULERS_MAX;
   const cells: ComparisonCell[] = [];
   const loaderCeilings: Record<number, number> = {};
   const rmc = isRmcOperation(base.operation);
@@ -284,6 +316,35 @@ export function runComparisonGrid(base: SimulationConfig): ComparisonGrid {
         num_pavers: nL,
         num_forms: nH,
         num_crews: nL,
+        // Brick membaca num_masons / num_helpers lebih dulu daripada num_loaders
+        ...(isBrickOperation(base.operation)
+          ? {
+              num_masons: nL,
+              num_helpers: nH,
+              lay_dist: fromMeanCv(
+                (base as SimulationConfig & { lay_mean?: number }).lay_mean ?? base.load_time_mean,
+                cv,
+                kind,
+              ),
+              lift_dist: fromMeanCv(
+                (base as SimulationConfig & { lift_mean?: number }).lift_mean ?? base.haul_time_mean,
+                cv,
+                kind,
+              ),
+              mortar_dist: fromMeanCv(
+                (base as SimulationConfig & { mortar_mean?: number }).mortar_mean ??
+                  base.dump_time_mean,
+                cv,
+                kind,
+              ),
+              fetch_dist: fromMeanCv(
+                (base as SimulationConfig & { fetch_mean?: number }).fetch_mean ??
+                  base.return_time_mean,
+                cv,
+                kind,
+              ),
+            }
+          : {}),
         cv,
         seed: seedBase + nL * 100 + nH,
         load_dist: fromMeanCv(base.load_time_mean, cv, kind),
@@ -345,7 +406,12 @@ export function runComparisonGrid(base: SimulationConfig): ComparisonGrid {
 }
 
 /** Hint puncak throughput, min biaya satuan, min emisi satuan per n place/loader. */
-export function bestFleetHints(grid: ComparisonGrid, loaderLabel = "unit place"): string[] {
+export function bestFleetHints(
+  grid: ComparisonGrid,
+  loaderLabel = "unit place",
+  haulerLabel = "hauler",
+  unit = "m³",
+): string[] {
   const tips: string[] = [];
   for (const nL of grid.loaders) {
     const subset = grid.cells.filter((c) => c.num_loaders === nL);
@@ -367,13 +433,16 @@ export function bestFleetHints(grid: ComparisonGrid, loaderLabel = "unit place")
       bestThr.throughput_theory > 0
         ? (1 - bestThr.throughput / bestThr.throughput_theory) * 100
         : 0;
+    const emi =
+      bestEmi.unit_emission > 0.0005
+        ? ` Min emisi satuan @ ${bestEmi.num_haulers} ${haulerLabel} (≈ ${bestEmi.unit_emission.toFixed(3)} kg CO₂e/${unit}).`
+        : "";
     tips.push(
-      `${loaderLabel} ×${nL}: throughput puncak ≈ ${bestThr.throughput.toFixed(1)} m³/jam @ ${bestThr.num_haulers} hauler` +
+      `${loaderLabel} ×${nL}: throughput puncak ≈ ${bestThr.throughput.toFixed(1)} ${unit}/jam @ ${bestThr.num_haulers} ${haulerLabel}` +
         ` (teori ${bestThr.throughput_theory.toFixed(1)}${gap > 1 ? `, gap ~${gap.toFixed(0)}%` : ""}).` +
-        ` Min biaya satuan @ ${bestCost.num_haulers} hauler` +
-        ` (≈ ${Math.round(bestCost.unit_cost).toLocaleString("id-ID")}/m³).` +
-        ` Min emisi satuan @ ${bestEmi.num_haulers} hauler` +
-        ` (≈ ${bestEmi.unit_emission.toFixed(3)} kg CO₂e/m³).`,
+        ` Min biaya satuan @ ${bestCost.num_haulers} ${haulerLabel}` +
+        ` (≈ ${Math.round(bestCost.unit_cost).toLocaleString("id-ID")}/${unit}).` +
+        emi,
     );
   }
   return tips;

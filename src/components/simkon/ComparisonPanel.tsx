@@ -60,9 +60,10 @@ export function ComparisonPanel({ baseConfig }: Props) {
     });
   };
 
+  const isBrick = baseConfig.operation === "bricklaying";
   const hints = useMemo(
-    () => (grid ? bestFleetHints(grid, labels.loader) : []),
-    [grid, labels.loader],
+    () => (grid ? bestFleetHints(grid, labels.loader, labels.hauler, unit) : []),
+    [grid, labels.loader, labels.hauler, unit],
   );
 
   // Sweet spots per loader/place count
@@ -98,44 +99,62 @@ export function ComparisonPanel({ baseConfig }: Props) {
           <CardDescription className="leading-relaxed">
             Parameter cycle, kapasitas, distribusi, target, dan seed diambil dari setup
             simulasi saat ini. Yang di-sweep:{" "}
-            <strong className="text-foreground">{labels.loader} 1–3</strong> dan{" "}
-            <strong className="text-foreground">{labels.hauler} 1–{COMPARE_HAULERS_MAX}</strong>.{" "}
-            Sumbu X = jumlah {labels.hauler}; tiap warna = jumlah {labels.loader}.
+            <strong className="text-foreground">
+              {labels.loader} 1–{isBrick ? 4 : grid?.loaders.length ? Math.max(...grid.loaders) : 3}
+            </strong>{" "}
+            dan{" "}
+            <strong className="text-foreground">
+              {labels.hauler} 1–{isBrick ? 8 : COMPARE_HAULERS_MAX}
+            </strong>
+            . Sumbu X = jumlah {labels.hauler}; tiap warna = jumlah {labels.loader}.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
           <p className="font-medium text-foreground">Grafik yang ditampilkan</p>
           <ol className="list-decimal space-y-1 pl-5">
             <li>
-              <strong className="text-foreground">Throughput ({unit}/jam)</strong> —
-              simulasi (tebal) vs{" "}
-              <strong className="text-foreground">teoritis</strong> (putus-putus):{" "}
-              min(kap. loading, kap. hauling) tanpa antrian & variasi.
+              <strong className="text-foreground">Throughput ({unit}/jam)</strong> — simulasi
+              (tebal) vs <strong className="text-foreground">teoritis</strong> (putus-putus)
+              {isBrick
+                ? ": min(laju pasang tukang, suplai helper) tanpa antrian scaffold."
+                : ": min(kap. loading, kap. hauling) tanpa antrian dan variasi."}
             </li>
             <li>
-              <strong className="text-foreground">Utilisasi {labels.loader}</strong> —
-              loading bottleneck vs under-utilized.
+              <strong className="text-foreground">Utilisasi {labels.loader}</strong>
+              {isBrick
+                ? " — bagian waktu tukang yang sedang memasang."
+                : " — loading bottleneck vs under-utilized."}
             </li>
             <li>
-              <strong className="text-foreground">Utilisasi {labels.hauler}</strong> —
-              apakah armada angkut jenuh.
+              <strong className="text-foreground">Utilisasi {labels.hauler}</strong>
+              {isBrick
+                ? " — bagian waktu helper yang sedang fetch, lift, atau mortar."
+                : " — apakah armada angkut jenuh."}
             </li>
             <li>
-              <strong className="text-foreground">Waktu tunggu antri rata-rata</strong> —
-              trade-off hauler ekstra vs antrian di loading.
+              <strong className="text-foreground">Waktu tunggu rata-rata</strong>
+              {isBrick
+                ? " — lama tukang menunggu bata atau mortar, pada siklus yang memang menunggu."
+                : " — trade-off hauler ekstra vs antrian di loading."}
             </li>
             <li>
-              <strong className="text-foreground">Panjang antrian rata-rata</strong> —
-              kepadatan antrian di loading.
+              <strong className="text-foreground">Panjang antrian rata-rata</strong>
+              {isBrick
+                ? " — rata-rata jumlah tukang yang sedang menunggu bahan."
+                : " — kepadatan antrian di loading."}
             </li>
             <li>
-              <strong className="text-foreground">Biaya satuan pekerjaan</strong> —
-              biaya fleet total ÷ volume (cari yang rendah).
+              <strong className="text-foreground">Biaya satuan pekerjaan</strong> — upah selama
+              simulasi ÷ volume.
             </li>
             <li>
-              <strong className="text-foreground">Biaya waiting (waste)</strong> —
-              jam·unit antri × tarif truck (pemborosan).
+              <strong className="text-foreground">Biaya menunggu (waste)</strong>
+              {isBrick
+                ? " — upah jam tukang dan helper yang tidak sedang bekerja."
+                : " — jam·unit antri × tarif truck (pemborosan)."}
             </li>
+            {isBrick ? null : (
+              <>
             <li>
               <strong className="text-foreground">Emisi satuan (kg CO₂e/m³)</strong> —
               intensitas karbon; bandingkan sweet spot vs biaya.
@@ -144,9 +163,18 @@ export function ComparisonPanel({ baseConfig }: Props) {
               <strong className="text-foreground">Emisi waiting (waste karbon)</strong> —
               CO₂e dari truck mengantri.
             </li>
+              </>
+            )}
           </ol>
           <p className="pt-1 text-xs">
-            {baseConfig.operation === "concreting" ? (
+            {isBrick ? (
+              <>
+                Teori tanpa antrian: laju pasang = n tukang × (60 / t
+                <sub>pasang</sub>) × m²/bata; suplai helper = n helper × (60 / (t
+                <sub>fetch</sub>+t<sub>lift</sub>+t<sub>mortar</sub>)) × m²/batch. Sistem =
+                min(keduanya).
+              </>
+            ) : baseConfig.operation === "concreting" ? (
               <>
                 Teori dual-cycle: place = n<sub>P</sub> × (60 / t<sub>place</sub>) ×
                 place_cap; truck = n<sub>T</sub> × (60 / t<sub>truck</sub>) × drum_cap;
@@ -225,10 +253,10 @@ export function ComparisonPanel({ baseConfig }: Props) {
 
       <Card className="rounded-[var(--radius-xl)]">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Sweet spot fleet</CardTitle>
+          <CardTitle className="text-sm">Sweet spot</CardTitle>
           <CardDescription>
-            Titik optimal per jumlah {labels.loader} — throughput puncak vs min biaya vs min emisi
-            (bisa beda).
+            Titik optimal per jumlah {labels.loader} — throughput puncak vs biaya satuan
+            {isBrick ? "." : " vs emisi (bisa beda)."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -238,8 +266,8 @@ export function ComparisonPanel({ baseConfig }: Props) {
                 <strong className="text-foreground">
                   {labels.loader} ×{s.nL}:
                 </strong>{" "}
-                max thr @ {s.thrH} {labels.hauler.toLowerCase()} · min biaya @ {s.costH} · min
-                emisi @ {s.emiH}
+                max thr @ {s.thrH} {labels.hauler.toLowerCase()} · min biaya @ {s.costH}
+                {isBrick ? "" : ` · min emisi @ ${s.emiH}`}
               </li>
             ))}
           </ul>
@@ -248,8 +276,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <CompareChart
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
           title={`Utilisasi ${labels.loader} (%)`}
-          description="Sibuk loading. Turun tajam saat truck kurang (menunggu haul)."
+          description={
+            isBrick
+              ? "Persen waktu tukang sedang memasang. Naik kalau helper cukup mengisi scaffold."
+              : "Sibuk loading. Turun tajam saat truck kurang (menunggu haul)."
+          }
           data={grid.byHauler}
           loaders={grid.loaders}
           yKeyPrefix="utilL_"
@@ -257,8 +291,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
           yDomain={[0, 100]}
         />
         <CompareChart
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
           title={`Utilisasi ${labels.hauler} (%)`}
-          description="Sibuk load+haul+dump+return. Turun saat truck berlebih (antrian/idle)."
+          description={
+            isBrick
+              ? "Persen waktu helper sedang fetch, lift, atau mortar. Turun jika tukang yang menjadi batas."
+              : "Sibuk load+haul+dump+return. Turun saat truck berlebih (antrian/idle)."
+          }
           data={grid.byHauler}
           loaders={grid.loaders}
           yKeyPrefix="utilH_"
@@ -269,8 +309,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <CompareChart
-          title="Waktu tunggu antri rata-rata (mnt)"
-          description={`Rata-rata ${labels.hauler.toLowerCase()} menunggu ${labels.loader.toLowerCase()} per cycle.`}
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
+          title={isBrick ? "Tunggu bahan tukang (mnt)" : "Waktu tunggu antri rata-rata (mnt)"}
+          description={
+            isBrick
+              ? "Rata-rata menit tukang menunggu bata atau mortar, hanya pada siklus yang menunggu."
+              : `Rata-rata ${labels.hauler.toLowerCase()} menunggu ${labels.loader.toLowerCase()} per cycle.`
+          }
           data={grid.byHauler}
           loaders={grid.loaders}
           yKeyPrefix="wait_"
@@ -278,8 +324,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
           yDomain={[0, "auto"]}
         />
         <CompareChart
-          title="Panjang antrian rata-rata"
-          description={`Time-weighted rata-rata jumlah ${labels.hauler.toLowerCase()} mengantri di place/loading.`}
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
+          title={isBrick ? "Tukang yang menunggu (orang)" : "Panjang antrian rata-rata"}
+          description={
+            isBrick
+              ? "Rata-rata jumlah tukang yang sedang menunggu bahan di scaffold."
+              : `Time-weighted rata-rata jumlah ${labels.hauler.toLowerCase()} mengantri di place/loading.`
+          }
           data={grid.byHauler}
           loaders={grid.loaders}
           yKeyPrefix="qlen_"
@@ -290,8 +342,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <CompareChart
-          title={`Biaya satuan pekerjaan (${baseConfig.cost_currency || "Rp"}/${unit})`}
-          description="Biaya sewa fleet selama sim ÷ volume. Ideal: turun lalu naik (U-shape) saat truck berlebih."
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
+          title={`Biaya satuan (${baseConfig.cost_currency || "Rp"}/${unit})`}
+          description={
+            isBrick
+              ? "Upah tukang + helper selama simulasi ÷ m². Naik lagi kalau helper ditambah tetapi dinding tidak bertambah."
+              : "Biaya sewa fleet selama sim ÷ volume. Ideal: turun lalu naik (U-shape) saat truck berlebih."
+          }
           data={grid.byHauler}
           loaders={grid.loaders}
           yKeyPrefix="ucost_"
@@ -300,8 +358,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
           money
         />
         <CompareChart
-          title={`Biaya waiting / waste (${baseConfig.cost_currency || "Rp"})`}
-          description={`Jam·unit tunggu × tarif ${labels.hauler.toLowerCase()}. Naik saat armada hauler menumpuk di antrian.`}
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
+          title={`Biaya menunggu (${baseConfig.cost_currency || "Rp"})`}
+          description={
+            isBrick
+              ? "Upah jam tukang dan helper yang tidak sedang bekerja. Turun kalau pasokan dan pasang seimbang."
+              : `Jam·unit tunggu × tarif ${labels.hauler.toLowerCase()}. Naik saat armada hauler menumpuk di antrian.`
+          }
           data={grid.byHauler}
           loaders={grid.loaders}
           yKeyPrefix="wcost_"
@@ -312,8 +376,14 @@ export function ComparisonPanel({ baseConfig }: Props) {
       </div>
 
       <CompareChart
-        title={`Waste waiting per volume (${baseConfig.cost_currency || "Rp"}/${unit})`}
-        description="Biaya waiting ÷ volume — intensitas pemborosan per m³."
+        op={baseConfig.operation}
+        method={baseConfig.placement_method}
+        title={`Biaya menunggu per ${unit} (${baseConfig.cost_currency || "Rp"}/${unit})`}
+        description={
+          isBrick
+            ? "Upah waktu tidak produktif ÷ luas dinding."
+            : "Biaya waiting ÷ volume — intensitas pemborosan per m³."
+        }
         data={grid.byHauler}
         loaders={grid.loaders}
         yKeyPrefix="wucost_"
@@ -322,8 +392,12 @@ export function ComparisonPanel({ baseConfig }: Props) {
         money
       />
 
+      {isBrick ? null : (
+        <>
       <div className="grid gap-4 lg:grid-cols-2">
         <CompareChart
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
           title={`Emisi satuan (kg CO₂e/${unit})`}
           description="Total emisi ÷ volume. Cari titik rendah; bandingkan dengan min biaya satuan."
           data={grid.byHauler}
@@ -333,6 +407,8 @@ export function ComparisonPanel({ baseConfig }: Props) {
           yDomain={[0, "auto"]}
         />
         <CompareChart
+          op={baseConfig.operation}
+          method={baseConfig.placement_method}
           title="Emisi waiting / waste karbon (kg CO₂e)"
           description={`Jam antri ${labels.hauler.toLowerCase()} × EF idle. Naik saat fleet hauler berlebih.`}
           data={grid.byHauler}
@@ -344,6 +420,8 @@ export function ComparisonPanel({ baseConfig }: Props) {
       </div>
 
       <CompareChart
+        op={baseConfig.operation}
+        method={baseConfig.placement_method}
         title={`Waste karbon per volume (kg CO₂e/${unit})`}
         description="Emisi waiting ÷ volume — intensitas pemborosan karbon."
         data={grid.byHauler}
@@ -352,12 +430,18 @@ export function ComparisonPanel({ baseConfig }: Props) {
         yUnit={`kg/${unit}`}
         yDomain={[0, "auto"]}
       />
+        </>
+      )}
 
       <Card className="rounded-[var(--radius-xl)]">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Petunjuk fleet (throughput · biaya · emisi)</CardTitle>
+          <CardTitle className="text-sm">
+            {isBrick ? "Petunjuk kru (throughput · biaya)" : "Petunjuk fleet (throughput · biaya · emisi)"}
+          </CardTitle>
           <CardDescription>
-            Puncak produksi, min biaya satuan, dan min emisi satuan bisa di truck count berbeda.
+            {isBrick
+              ? "Puncak luas per jam dan biaya satuan terendah bisa jatuh pada jumlah helper yang berbeda."
+              : "Puncak produksi, min biaya satuan, dan min emisi satuan bisa di truck count berbeda."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -397,17 +481,36 @@ function ThroughputChart({
   method?: SimulationConfig["placement_method"];
 }) {
   const labels = resourceLabels(op, method ?? null);
+  const peak = Math.max(
+    0,
+    ...data.flatMap((row) =>
+      loaders.flatMap((nL) => [row[`thr_${nL}`] ?? 0, row[`thrT_${nL}`] ?? 0]),
+    ),
+  );
+  const yDigits = peak >= 20 ? 0 : 1;
+  const brick = op === "bricklaying";
   return (
     <Card className="rounded-[var(--radius-xl)]">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">Throughput ({unit}/jam) — sim vs teoritis</CardTitle>
         <CardDescription className="leading-relaxed">
+          {brick ? (
+            <>
+              <strong className="text-foreground">Tebal</strong> = simulasi (antrian scaffold,
+              buffer, variasi). <strong className="text-foreground">Putus-putus</strong> = batas
+              tanpa antrian: min(laju pasang tukang, suplai helper). Garis simulasi biasanya di
+              bawah teori. Kalau sudah mendatar, menambah helper tidak menambah luas.
+            </>
+          ) : (
+            <>
           <strong className="text-foreground">Tebal</strong> = DES (antrian, buffer, variasi, who-waits).{" "}
           <strong className="text-foreground">Putus-putus</strong> = batas atas teoritis tanpa
           antrian: min(kap. place, kap. truck). Dual-cycle RMC: place = n<sub>P</sub>×(60/t
           <sub>place</sub>)×place_cap; truck = n<sub>T</sub>×(60/t<sub>truck</sub>)×drum. Sim
           biasanya <em>di bawah</em> teori (gap 5–25% normal); gap besar berarti masih ada
           bottleneck/interferensi.
+            </>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -429,7 +532,7 @@ function ThroughputChart({
               domain={[0, "auto"]}
               tick={{ fontSize: 11 }}
               width={52}
-              tickFormatter={(v) => Number(v).toFixed(0)}
+              tickFormatter={(v) => Number(v).toFixed(yDigits)}
               label={{
                 value: `${unit}/jam`,
                 angle: -90,
@@ -476,7 +579,7 @@ function ThroughputChart({
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           {loaders.map((nL) => (
             <li key={nL}>
-              Plafon place teori ×{nL}:{" "}
+              Plafon {brick ? "pasang" : "place"} teori ×{nL}:{" "}
               <span className="font-mono tabular-nums text-foreground">
                 {formatNum(loaderCeilings[nL] ?? 0, 1)}
               </span>{" "}
@@ -506,6 +609,8 @@ function CompareChart({
   yUnit,
   yDomain,
   money = false,
+  op,
+  method,
 }: {
   title: string;
   description: string;
@@ -515,8 +620,10 @@ function CompareChart({
   yUnit: string;
   yDomain: [number, number | "auto"];
   money?: boolean;
+  op?: SimulationConfig["operation"];
+  method?: SimulationConfig["placement_method"];
 }) {
-  const labels = resourceLabels();
+  const labels = resourceLabels(op, method ?? null);
   return (
     <Card className="rounded-[var(--radius-xl)]">
       <CardHeader className="pb-2">
@@ -547,7 +654,7 @@ function CompareChart({
                   ? formatAxisMoney(Number(v))
                   : yUnit === "%"
                     ? `${v}`
-                    : Number(v).toFixed(yUnit === "mnt" ? 1 : 0)
+                    : Number(v).toFixed(yUnit === "mnt" || yUnit === "unit" ? 1 : 0)
               }
             />
             <Tooltip
